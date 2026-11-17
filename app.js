@@ -1,5 +1,5 @@
 const DB_NAME='badminton-training-db', DB_VERSION=1, STORE='records';
-const TOPICS=['Удары','Перемещения','Игра у сетки','Подача и приём','Тактика','Физическая подготовка'];
+const TOPICS=['Техника','Перемещения','Игра у сетки', 'Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
 let db, exercises=[], plans=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[];
 const $=id=>document.getElementById(id);
 const uid=()=>`${Date.now()}-${Math.random().toString(16).slice(2)}`;
