@@ -1,0 +1,10 @@
+{
+  "name": "Badminton Training",
+  "short_name": "Badminton",
+  "description": "Личная библиотека упражнений и конструктор тренировок по бадминтону",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#173b63",
+  "icons": []
+}
