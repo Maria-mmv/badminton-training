@@ -34,30 +34,46 @@ $('addExerciseBtn').onclick=()=>{resetForm();$('exerciseDialog').showModal();};
 $('closeDialog').onclick=()=>$('exerciseDialog').close();
 $('deleteExerciseBtn').onclick=async()=>{const id=$('exerciseId').value;if(id&&confirm('Удалить упражнение из библиотеки?')){exercises=exercises.filter(e=>String(e.id)!==id);await persist();$('exerciseDialog').close();toast('Упражнение удалено');}};
 $('exerciseForm').addEventListener('submit',async ev=>{ev.preventDefault();const id=$('exerciseId').value;const videos=[...$('videoFields').children].map(row=>Object.fromEntries([...row.querySelectorAll('input')].map(i=>[i.dataset.key,i.value.trim()]))).filter(v=>v.url);const old=exercises.find(e=>String(e.id)===id);const images=[...existingImageUrls,...pendingImages];const e={id:id?Number(id):Date.now(),name:$('exName').value.trim(),description:$('exDescription').value,topic:$('exTopic').value,level:$('exLevel').value,duration:Math.max(1,Number($('exDuration').value)||1),format:$('exFormat').value,shots:parseList($('exShots').value),tags:parseList($('exTags').value),zones:parseList($('exZones').value),equipment:$('exEquipment').value,notes:$('exNotes').value,images,videos,personalDifficulty:old?.personalDifficulty||'',trainingNotes:old?.trainingNotes||[]};if(old)exercises=exercises.map(x=>x.id===old.id?e:x);else exercises.unshift(e);await persist();$('exerciseDialog').close();toast(old?'Изменения сохранены':'Упражнение добавлено');});
-function showDetail(id){const e=exercises.find(x=>x.id===id);if(!e)return;selectedDetail=id;$('detailTitle').textContent=e.name;$('detailMeta').textContent=`${e.topic} · ${e.level} · ${e.duration} мин · ${e.format||''}`;const box=$('detailContent');box.innerHTML='';if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;box.append(img);}if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach(im=>{const img=document.createElement('img');img.src=im.data;gallery.append(img);});box.append(gallery);}const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');p.textContent=content;s.append(h,p);box.append(s);};section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Зоны корта',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);if(e.videos?.length){const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent='Видео';s.append(h);e.videos.forEach(v=>{
-  const a=document.createElement('a');
-  a.className='video-link';
+function showDetail(id){const e=exercises.find(x=>x.id===id);if(!e)return;selectedDetail=id;$('detailTitle').textContent=e.name;$('detailMeta').textContent=`${e.topic} · ${e.level} · ${e.duration} мин · ${e.format||''}`;const box=$('detailContent');box.innerHTML='';if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;box.append(img);}if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach(im=>{const img=document.createElement('img');img.src=im.data;gallery.append(img);});box.append(gallery);}const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');p.textContent=content;s.append(h,p);box.append(s);};section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Зоны корта',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);if(e.videos?.length){const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent='Видео';s.append(h);e.videos.forEach(v => {
+  const a = document.createElement('a');
+  a.className = 'video-link';
 
-  const isWeChat = (() => {
-    try {
-      const host = new URL(v.url).hostname;
-      return host === 'weixin.qq.com' ||
-             host.endsWith('.weixin.qq.com') ||
-             host === 'channels.weixin.qq.com';
-    } catch {
-      return false;
-    }
-  })();
+  let isWeChat = false;
 
-  a.href = v.url;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
+  try {
+    const host = new URL(v.url).hostname;
+    isWeChat =
+      host === 'weixin.qq.com' ||
+      host.endsWith('.weixin.qq.com');
+  } catch {}
 
-  const title = v.title || v.url;
   a.textContent =
-    (isWeChat ? 'Открыть в WeChat: ' : 'Открыть видео: ') +
-    title +
-    (v.note ? ' — ' + v.note : '');
+    (v.title || 'Видео') +
+    (v.note ? ' — ' + v.note : '') +
+    (isWeChat ? ' (WeChat)' : '');
+
+  if (isWeChat) {
+    a.href = '#';
+    a.addEventListener('click', event => {
+      event.preventDefault();
+
+      const url = new URL(v.url);
+
+      const fallback = encodeURIComponent(v.url);
+
+      const intent =
+        `intent://${url.host}${url.pathname}${url.search}` +
+        `#Intent;scheme=https;` +
+        `package=com.tencent.mm;` +
+        `S.browser_fallback_url=${fallback};end`;
+
+      window.location.href = intent;
+    });
+  } else {
+    a.href = v.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+  }
 
   s.append(a);
 });box.append(s);}const pd=document.createElement('div');pd.className='detail-section';const h=document.createElement('h3');h.textContent='Моя оценка сложности';const sel=document.createElement('select');sel.innerHTML='<option value="">Не оценено</option><option>Легко</option><option>Средне</option><option>Трудно</option>';sel.value=e.personalDifficulty||'';sel.onchange=async()=>{e.personalDifficulty=sel.value;await persist();toast('Оценка сохранена');};pd.append(h,sel);box.append(pd);const notes=document.createElement('div');notes.className='detail-section';const nh=document.createElement('h3');nh.textContent='Заметка после тренировки';const ta=document.createElement('textarea');ta.rows=2;ta.placeholder='Что получилось, что стоит исправить…';const nb=document.createElement('button');nb.className='button ghost';nb.textContent='Сохранить заметку';nb.onclick=async()=>{e.trainingNotes=e.trainingNotes||[];e.trainingNotes.unshift({date:new Date().toISOString(),text:ta.value});await persist();ta.value='';toast('Заметка сохранена');};notes.append(nh,ta,nb);(e.trainingNotes||[]).slice(0,5).forEach(n=>{const p=document.createElement('p');p.className='muted';p.textContent=`${new Date(n.date).toLocaleDateString('ru-RU')}: ${n.text}`;notes.append(p);});box.append(notes);$('detailDialog').showModal();}
