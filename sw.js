@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v2-drive-sync';
+const CACHE = 'badminton-training-v3-bridge-fix';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

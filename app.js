@@ -101,10 +101,44 @@ $('exerciseGrid').addEventListener('click',ev=>{});
 $('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'badminton-training-backup',version:1,exportedAt:new Date().toISOString(),exercises,plans},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`badminton-training-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);toast('Резервная копия подготовлена');};
 $('importInput').onchange=async ev=>{const file=ev.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(data.format!=='badminton-training-backup'||!Array.isArray(data.exercises)||!Array.isArray(data.plans))throw new Error('Неподходящий формат файла');if(!confirm(`Импортировать ${data.exercises.length} упражнений и ${data.plans.length} планов? Текущая библиотека будет заменена.`))return;exercises=data.exercises;plans=data.plans;await persist();toast('Данные импортированы');}catch(err){alert('Не удалось импортировать файл: '+err.message);}finally{ev.target.value='';}};
 // ---------------- Google Drive synchronisation ----------------
+// Apps Script HtmlService may wrap the Bridge page in internal Google iframes.
+// Therefore messages must be relayed to all descendant frames, not just the
+// outer iframe's contentWindow. The Bridge replies directly to window.top.
+function collectSyncFrameWindows(){
+  if(!syncFrame || !syncFrame.contentWindow) return [];
+  const found=[];
+  const queue=[syncFrame.contentWindow];
+  while(queue.length){
+    const current=queue.shift();
+    if(!current || found.includes(current)) continue;
+    found.push(current);
+    let count=0;
+    try{count=current.frames.length;}catch{continue;}
+    for(let i=0;i<count;i++){
+      try{
+        const child=current.frames[i];
+        if(child && !found.includes(child)) queue.push(child);
+      }catch{}
+    }
+  }
+  return found;
+}
+function isSyncBridgeWindow(source){
+  return collectSyncFrameWindows().some(frame=>frame===source);
+}
+function postToSyncBridge(message){
+  const targets=collectSyncFrameWindows();
+  if(!targets.length) throw new Error('Не найден iframe Google Apps Script.');
+  let sent=0;
+  for(const target of targets){
+    try{target.postMessage(message,'*');sent++;}catch{}
+  }
+  if(!sent) throw new Error('Не удалось передать запрос мосту Google Apps Script.');
+}
 function initSyncBridge(){
   syncFrame=$('syncFrame');
   window.addEventListener('message',event=>{
-    if(!syncFrame || event.source!==syncFrame.contentWindow) return;
+    if(!isSyncBridgeWindow(event.source)) return;
     let host='';
     try{host=new URL(event.origin).hostname;}catch{return;}
     if(host!=='script.google.com' && !host.endsWith('.googleusercontent.com')) return;
@@ -123,15 +157,18 @@ function initSyncBridge(){
     if(message.error) pending.reject(new Error(message.error));
     else pending.resolve(message.result);
   });
-  // Set the URL only after the message listener exists, so the bridge's ready
-  // notification cannot race with application startup.
+  syncFrame.addEventListener('load',()=>{
+    // The outer Google frame can load before its inner HtmlService frame is ready.
+    // The actual ready signal is sent by Bridge.html once its script has started.
+    updateSyncUI();
+  });
   syncFrame.src=SYNC_EXEC_URL;
 }
 async function waitForSyncBridge(){
   if(syncBridgeReady) return;
   await Promise.race([
     syncBridgeReadyPromise,
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error('Не удалось загрузить мост Google Apps Script. Проверьте интернет и URL веб-приложения.')),20000))
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error('Страница Google Apps Script загрузилась, но мост не прислал сигнал готовности. Обновите Bridge.html в Apps Script и создайте новую версию развертывания.')),25000))
   ]);
 }
 async function callSyncBridge(action,payload=null){
@@ -144,10 +181,16 @@ async function callSyncBridge(action,payload=null){
       reject(new Error('Google Drive не ответил за 30 секунд. Проверьте подключение и повторите попытку.'));
     },30000);
     syncPending.set(requestId,{resolve,reject,timer});
-    // Apps Script redirects its iframe to a googleusercontent.com origin, so
-    // the target origin is intentionally '*' here. The bridge validates the
-    // exact parent origin and the message source before calling the server.
-    syncFrame.contentWindow.postMessage({channel:SYNC_CHANNEL,requestId,action,payload,token:syncToken},'*');
+    // Send to the Apps Script wrapper and every nested HtmlService frame.
+    // Bridge.html accepts only messages whose source is window.top and whose
+    // origin is the known GitHub Pages origin.
+    try{
+      postToSyncBridge({channel:SYNC_CHANNEL,requestId,action,payload,token:syncToken});
+    }catch(err){
+      clearTimeout(timer);
+      syncPending.delete(requestId);
+      reject(err);
+    }
   });
 }
 function updateSyncUI(){
