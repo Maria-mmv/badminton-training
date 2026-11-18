@@ -61,7 +61,24 @@
         <button id="exportBtn" class="button primary">Экспортировать JSON</button>
         <label class="button ghost file-button">Импортировать JSON<input id="importInput" type="file" accept="application/json,.json"></label>
       </div>
-      <div class="notice"><strong>Важно:</strong> локальное хранилище не синхронизируется автоматически между телефоном и компьютером. Для переноса используйте экспорт и импорт. Облачную синхронизацию можно подключить отдельным этапом.</div>
+      <div class="sync-card">
+        <h3>Синхронизация через Google Drive</h3>
+        <p class="muted">Подключите один и тот же Google Drive на компьютере и телефоне. Ключ хранится только в этом браузере и не попадает в GitHub.</p>
+        <label class="field">Ключ синхронизации (SYNC_TOKEN)
+          <input id="syncTokenInput" type="password" autocomplete="off" placeholder="Вставьте SYNC_TOKEN из Apps Script">
+        </label>
+        <div class="actions">
+          <button id="saveSyncTokenBtn" class="button primary" type="button">Сохранить ключ на этом устройстве</button>
+          <button id="syncNowBtn" class="button ghost" type="button" disabled>Синхронизировать сейчас</button>
+        </div>
+        <p id="syncStatus" class="sync-status" role="status">Синхронизация ещё не настроена на этом устройстве.</p>
+        <p id="syncLastSync" class="hint"></p>
+        <div class="actions sync-secondary-actions">
+          <button id="downloadCloudBtn" class="button ghost" type="button" disabled>Загрузить из облака</button>
+          <button id="uploadCloudBtn" class="button ghost" type="button" disabled>Отправить в облако</button>
+        </div>
+        <p class="hint">При первом подключении приложение предложит выбрать, какую библиотеку оставить, если данные уже есть и на устройстве, и в облаке. Не используйте один ключ для разных проектов.</p>
+      </div>
       <div class="storage-info" id="storageInfo"></div>
     </section>
   </main>
@@ -107,6 +124,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
+  <iframe id="syncFrame" title="Google Drive sync bridge" src="about:blank" aria-hidden="true" tabindex="-1"></iframe>
   <script src="app.js"></script>
 </body>
 </html>
