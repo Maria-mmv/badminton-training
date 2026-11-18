@@ -3,9 +3,7 @@ const SYNC_EXEC_URL='https://script.google.com/macros/s/AKfycbwi4GIckQ2ZmeMlUu54
 const SYNC_CHANNEL='badminton-training-sync';
 const TOPICS=['Техника','Перемещения','Игра у сетки', 'Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
 let db, exercises=[], plans=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[];
-let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncFrame=null, syncBridgeReady=false, syncBridgeResolve=null, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
-const syncPending=new Map();
-const syncBridgeReadyPromise=new Promise(resolve=>{syncBridgeResolve=resolve;});
+let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncBridgeReady=false, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
 const $=id=>document.getElementById(id);
 const uid=()=>`${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const parseList=s=>s.split(',').map(x=>x.trim()).filter(Boolean);
@@ -101,97 +99,96 @@ $('exerciseGrid').addEventListener('click',ev=>{});
 $('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'badminton-training-backup',version:1,exportedAt:new Date().toISOString(),exercises,plans},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`badminton-training-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);toast('Резервная копия подготовлена');};
 $('importInput').onchange=async ev=>{const file=ev.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(data.format!=='badminton-training-backup'||!Array.isArray(data.exercises)||!Array.isArray(data.plans))throw new Error('Неподходящий формат файла');if(!confirm(`Импортировать ${data.exercises.length} упражнений и ${data.plans.length} планов? Текущая библиотека будет заменена.`))return;exercises=data.exercises;plans=data.plans;await persist();toast('Данные импортированы');}catch(err){alert('Не удалось импортировать файл: '+err.message);}finally{ev.target.value='';}};
 // ---------------- Google Drive synchronisation ----------------
-// Apps Script HtmlService may wrap the Bridge page in internal Google iframes.
-// Therefore messages must be relayed to all descendant frames, not just the
-// outer iframe's contentWindow. The Bridge replies directly to window.top.
-function collectSyncFrameWindows(){
-  if(!syncFrame || !syncFrame.contentWindow) return [];
-  const found=[];
-  const queue=[syncFrame.contentWindow];
-  while(queue.length){
-    const current=queue.shift();
-    if(!current || found.includes(current)) continue;
-    found.push(current);
-    let count=0;
-    try{count=current.frames.length;}catch{continue;}
-    for(let i=0;i<count;i++){
-      try{
-        const child=current.frames[i];
-        if(child && !found.includes(child)) queue.push(child);
-      }catch{}
-    }
-  }
-  return found;
-}
-function isSyncBridgeWindow(source){
-  return collectSyncFrameWindows().some(frame=>frame===source);
-}
-function postToSyncBridge(message){
-  const targets=collectSyncFrameWindows();
-  if(!targets.length) throw new Error('Не найден iframe Google Apps Script.');
-  let sent=0;
-  for(const target of targets){
-    try{target.postMessage(message,'*');sent++;}catch{}
-  }
-  if(!sent) throw new Error('Не удалось передать запрос мосту Google Apps Script.');
-}
+// Apps Script is called as a normal web endpoint (no iframe / HtmlService).
+// Reads use Google's documented JSONP pattern. Writes use a simple text/plain
+// POST with no-cors; the result is verified with a subsequent JSONP read.
 function initSyncBridge(){
-  syncFrame=$('syncFrame');
-  window.addEventListener('message',event=>{
-    if(!isSyncBridgeWindow(event.source)) return;
-    let host='';
-    try{host=new URL(event.origin).hostname;}catch{return;}
-    if(host!=='script.google.com' && !host.endsWith('.googleusercontent.com')) return;
-    const message=event.data;
-    if(!message || message.channel!==SYNC_CHANNEL) return;
-    if(message.type==='ready'){
-      syncBridgeReady=true;
-      syncBridgeResolve(true);
-      updateSyncUI();
-      return;
-    }
-    if(!message.requestId || !syncPending.has(message.requestId)) return;
-    const pending=syncPending.get(message.requestId);
-    syncPending.delete(message.requestId);
-    clearTimeout(pending.timer);
-    if(message.error) pending.reject(new Error(message.error));
-    else pending.resolve(message.result);
-  });
-  syncFrame.addEventListener('load',()=>{
-    // The outer Google frame can load before its inner HtmlService frame is ready.
-    // The actual ready signal is sent by Bridge.html once its script has started.
-    updateSyncUI();
-  });
-  syncFrame.src=SYNC_EXEC_URL;
+  // The endpoint is checked when the user saves the token and syncNow() runs.
+  syncBridgeReady=false;
+  updateSyncUI();
 }
-async function waitForSyncBridge(){
-  if(syncBridgeReady) return;
-  await Promise.race([
-    syncBridgeReadyPromise,
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error('Страница Google Apps Script загрузилась, но мост не прислал сигнал готовности. Обновите Bridge.html в Apps Script и создайте новую версию развертывания.')),25000))
-  ]);
+function jsonpRequest(action){
+  return new Promise((resolve,reject)=>{
+    const callbackName=`__btSyncJsonp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script=document.createElement('script');
+    const url=new URL(SYNC_EXEC_URL);
+    let settled=false;
+    const cleanup=()=>{
+      if(settled) return;
+      settled=true;
+      clearTimeout(timer);
+      script.remove();
+      try{delete window[callbackName];}catch{window[callbackName]=undefined;}
+    };
+    const timer=setTimeout(()=>{
+      cleanup();
+      reject(new Error('Google Apps Script не ответил на запрос чтения. Проверьте публикацию Code.gs и доступ к скрипту.'));
+    },30000);
+    window[callbackName]=(response)=>{
+      cleanup();
+      if(!response || response.ok!==true){
+        reject(new Error(response?.error || 'Google Apps Script вернул некорректный ответ.'));
+        return;
+      }
+      resolve(response);
+    };
+    script.async=true;
+    script.referrerPolicy='no-referrer';
+    script.onerror=()=>{
+      cleanup();
+      reject(new Error('Не удалось обратиться к Google Apps Script. Проверьте URL веб-приложения и публикацию новой версии.'));
+    };
+    url.searchParams.set('action',action);
+    url.searchParams.set('token',syncToken);
+    url.searchParams.set('prefix',callbackName);
+    url.searchParams.set('_',String(Date.now()));
+    script.src=url.toString();
+    document.head.appendChild(script);
+  });
 }
 async function callSyncBridge(action,payload=null){
   if(!syncToken) throw new Error('Сначала сохраните SYNC_TOKEN на этом устройстве.');
-  await waitForSyncBridge();
-  return new Promise((resolve,reject)=>{
-    const requestId=uid();
-    const timer=setTimeout(()=>{
-      syncPending.delete(requestId);
-      reject(new Error('Google Drive не ответил за 30 секунд. Проверьте подключение и повторите попытку.'));
-    },30000);
-    syncPending.set(requestId,{resolve,reject,timer});
-    // Send to the Apps Script wrapper and every nested HtmlService frame.
-    // Bridge.html accepts only messages whose source is window.top and whose
-    // origin is the known GitHub Pages origin.
+  if(action==='read' || action==='ping'){
+    const response=await jsonpRequest(action);
+    syncBridgeReady=true;
+    updateSyncUI();
+    return action==='read' ? response.record : response;
+  }
+  if(action==='write'){
+    const writeId=`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const body={action:'write',token:syncToken,payload:{...payload,writeId}};
+    const json=JSON.stringify(body);
+    if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
+
     try{
-      postToSyncBridge({channel:SYNC_CHANNEL,requestId,action,payload,token:syncToken});
+      // text/plain is a CORS-safelisted content type, so the browser does not
+      // issue an OPTIONS preflight. The response is intentionally opaque.
+      await fetch(SYNC_EXEC_URL,{
+        method:'POST',
+        mode:'no-cors',
+        redirect:'follow',
+        headers:{'Content-Type':'text/plain;charset=UTF-8'},
+        body:json
+      });
     }catch(err){
-      clearTimeout(timer);
-      syncPending.delete(requestId);
-      reject(err);
+      throw new Error('Не удалось отправить данные в Google Apps Script: '+(err?.message||String(err)));
     }
-  });
+
+    // Since no-cors responses are unreadable, verify the write by reading the
+    // record back and checking its unique writeId.
+    const response=await jsonpRequest('read');
+    syncBridgeReady=true;
+    updateSyncUI();
+    const current=response.record;
+    if(current && current.lastWriteId===writeId){
+      return {ok:true,revision:Number(current.revision),updatedAt:current.updatedAt};
+    }
+    if(current && Number(current.revision)!==Number(payload.baseRevision)){
+      return {ok:false,conflict:true,current};
+    }
+    throw new Error('Google Apps Script принял запрос, но не удалось подтвердить запись в Google Drive. Повторите синхронизацию.');
+  }
+  throw new Error('Неизвестная операция синхронизации: '+action);
 }
 function updateSyncUI(){
   const tokenInput=$('syncTokenInput');
@@ -207,7 +204,7 @@ function updateSyncUI(){
     if(syncInProgress) status.textContent='Выполняется синхронизация…';
     else if(syncErrorMessage) status.textContent='Ошибка синхронизации: '+syncErrorMessage;
     else if(!configured) status.textContent='Синхронизация ещё не настроена на этом устройстве. Введите SYNC_TOKEN.';
-    else if(!syncBridgeReady) status.textContent='Ключ сохранён. Подключаемся к Google Drive…';
+    else if(!syncBridgeReady) status.textContent='Ключ сохранён. Проверяем соединение с Google Apps Script…';
     else if(syncMeta.dirty) status.textContent='Есть локальные изменения, ожидающие отправки в Google Drive.';
     else status.textContent='Подключение настроено. Локальная копия синхронизирована.';
   }
