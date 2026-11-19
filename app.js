@@ -70,22 +70,33 @@ function getFilteredExercises(){
   const level=$('levelFilter').value;
   return exercises.filter(e=>(!topic||e.topic===topic)&&(!level||e.level===level)&&[e.name,e.description,e.topic,e.shots,e.tags,e.zones].flat().join(' ').toLowerCase().includes(q));
 }
-const BULK_TAG_FIELDS={
-  tags:{label:'Дополнительный тег',placeholder:'Дополнительный тег для выбранных карточек'},
-  zones:{label:'Область применения',placeholder:'Область (зона корта или часть тела)'},
-  shots:{label:'Вид удара',placeholder:'Вид удара для выбранных карточек'}
+// The UI values are intentionally different from the data keys. This explicit
+// mapping prevents an application-area value from accidentally being written to tags.
+const BULK_TAG_TYPES={
+  additionalTags:{field:'tags',label:'Дополнительные теги',noun:'дополнительный тег',placeholder:'Дополнительный тег для выбранных карточек'},
+  applicationArea:{field:'zones',label:'Область применения',noun:'область применения',placeholder:'Зона корта или часть тела'},
+  shotType:{field:'shots',label:'Вид удара',noun:'вид удара',placeholder:'Вид удара для выбранных карточек'}
 };
+function getSelectedBulkTagType(){
+  const key=$('bulkTagType')?.value;
+  return Object.prototype.hasOwnProperty.call(BULK_TAG_TYPES,key)?BULK_TAG_TYPES[key]:null;
+}
 function updateBulkTagOptions(){
   const list=$('existingTagOptions');
-  const type=$('bulkTagType');
+  const type=getSelectedBulkTagType();
   const input=$('bulkTagInput');
-  if(!list||!type||!input)return;
-  const field=BULK_TAG_FIELDS[type.value]?type.value:'tags';
-  const values=[...new Set(exercises.flatMap(e=>Array.isArray(e[field])?e[field]:[]).map(t=>String(t).trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  if(!list||!input)return;
   list.innerHTML='';
+  if(!type){
+    input.placeholder='Сначала выберите тип значения';
+    $('bulkTagTargetHint').textContent='Выберите тип значения, чтобы указать поле назначения.';
+    return;
+  }
+  const values=[...new Set(exercises.flatMap(e=>Array.isArray(e[type.field])?e[type.field]:[]).map(t=>String(t).trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   values.forEach(value=>list.append(new Option(value,value)));
-  input.placeholder=BULK_TAG_FIELDS[field].placeholder;
-  input.setAttribute('aria-label',BULK_TAG_FIELDS[field].label);
+  input.placeholder=type.placeholder;
+  input.setAttribute('aria-label',type.label);
+  $('bulkTagTargetHint').textContent=`Значение будет добавлено в поле «${type.label}» у всех выбранных карточек.`;
 }
 function renderBulkTools(){
   const tools=$('bulkTools');
@@ -144,9 +155,9 @@ $('bulkTagType').addEventListener('change',()=>{
 });
 $('applyBulkTagBtn').addEventListener('click',async()=>{
   const value=$('bulkTagInput').value.trim();
-  const field=$('bulkTagType').value;
-  const fieldInfo=BULK_TAG_FIELDS[field];
-  if(!fieldInfo){toast('Выберите тип тега');return;}
+  const typeInfo=getSelectedBulkTagType();
+  if(!typeInfo){toast('Выберите тип значения');return;}
+  const field=typeInfo.field;
   if(!value){toast('Введите значение');return;}
   if(value.includes(',')){toast('Добавляйте по одному значению за раз');return;}
   if(!selectedExerciseIds.size){toast('Сначала выберите карточки');return;}
@@ -161,8 +172,7 @@ $('applyBulkTagBtn').addEventListener('click',async()=>{
   $('bulkTagInput').value='';
   updateBulkTagOptions();
   await persist();
-  const noun=field==='tags'?'тег':field==='zones'?'область':'вид удара';
-  toast(changed?`Добавлено: ${noun} — в ${changed} карточек`:'У выбранных карточек такое значение уже есть');
+  toast(changed?`Добавлено: ${typeInfo.noun} — в ${changed} карточек`:'У выбранных карточек такое значение уже есть');
 });
 
 function renderTopicManager(){

@@ -41,12 +41,13 @@
           <span id="selectedCount" class="muted">Выбрано карточек: 0</span>
           <button id="selectAllVisibleBtn" class="button ghost small" type="button">Выбрать видимые</button>
           <select id="bulkTagType" aria-label="Тип добавляемого тега">
-            <option value="tags">Дополнительный тег</option>
-            <option value="zones">Область применения</option>
-            <option value="shots">Вид удара</option>
+            <option value="additionalTags">Дополнительный тег</option>
+            <option value="applicationArea">Область применения</option>
+            <option value="shotType">Вид удара</option>
           </select>
           <input id="bulkTagInput" list="existingTagOptions" placeholder="Значение для выбранных карточек" aria-label="Значение тега">
           <datalist id="existingTagOptions"></datalist>
+          <small id="bulkTagTargetHint" class="hint bulk-target-hint">Значение будет добавлено в выбранную категорию.</small>
           <button id="applyBulkTagBtn" class="button primary small" type="button" disabled>Добавить значение</button>
           <button id="clearSelectionBtn" class="button ghost small" type="button" disabled>Снять выбор</button>
         </div>

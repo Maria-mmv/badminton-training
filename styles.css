@@ -34,3 +34,5 @@
 
 .video-url{font-size:12px;color:#65768b;overflow-wrap:anywhere}
 .video-title{font-weight:600}
+
+.bulk-target-hint{flex:1 0 100%;padding-left:2px;line-height:1.4}
