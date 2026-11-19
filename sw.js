@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v5-library-tools';
+const CACHE = 'badminton-training-v6-bulk-tag-types';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

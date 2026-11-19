@@ -70,12 +70,22 @@ function getFilteredExercises(){
   const level=$('levelFilter').value;
   return exercises.filter(e=>(!topic||e.topic===topic)&&(!level||e.level===level)&&[e.name,e.description,e.topic,e.shots,e.tags,e.zones].flat().join(' ').toLowerCase().includes(q));
 }
+const BULK_TAG_FIELDS={
+  tags:{label:'Дополнительный тег',placeholder:'Дополнительный тег для выбранных карточек'},
+  zones:{label:'Область применения',placeholder:'Область (зона корта или часть тела)'},
+  shots:{label:'Вид удара',placeholder:'Вид удара для выбранных карточек'}
+};
 function updateBulkTagOptions(){
   const list=$('existingTagOptions');
-  if(!list)return;
-  const tags=[...new Set(exercises.flatMap(e=>e.tags||[]).map(t=>String(t).trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const type=$('bulkTagType');
+  const input=$('bulkTagInput');
+  if(!list||!type||!input)return;
+  const field=BULK_TAG_FIELDS[type.value]?type.value:'tags';
+  const values=[...new Set(exercises.flatMap(e=>Array.isArray(e[field])?e[field]:[]).map(t=>String(t).trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   list.innerHTML='';
-  tags.forEach(tag=>list.append(new Option(tag,tag)));
+  values.forEach(value=>list.append(new Option(value,value)));
+  input.placeholder=BULK_TAG_FIELDS[field].placeholder;
+  input.setAttribute('aria-label',BULK_TAG_FIELDS[field].label);
 }
 function renderBulkTools(){
   const tools=$('bulkTools');
@@ -128,22 +138,31 @@ $('selectAllVisibleBtn').addEventListener('click',()=>{
   renderLibrary();
 });
 $('clearSelectionBtn').addEventListener('click',()=>{selectedExerciseIds.clear();renderLibrary();});
+$('bulkTagType').addEventListener('change',()=>{
+  $('bulkTagInput').value='';
+  updateBulkTagOptions();
+});
 $('applyBulkTagBtn').addEventListener('click',async()=>{
-  const tag=$('bulkTagInput').value.trim();
-  if(!tag){toast('Введите тег');return;}
-  if(tag.includes(',')){toast('Добавляйте по одному тегу за раз');return;}
+  const value=$('bulkTagInput').value.trim();
+  const field=$('bulkTagType').value;
+  const fieldInfo=BULK_TAG_FIELDS[field];
+  if(!fieldInfo){toast('Выберите тип тега');return;}
+  if(!value){toast('Введите значение');return;}
+  if(value.includes(',')){toast('Добавляйте по одному значению за раз');return;}
   if(!selectedExerciseIds.size){toast('Сначала выберите карточки');return;}
   let changed=0;
   exercises.forEach(e=>{
     if(!selectedExerciseIds.has(String(e.id)))return;
-    e.tags=e.tags||[];
-    if(!e.tags.some(existing=>String(existing).toLocaleLowerCase('ru')===tag.toLocaleLowerCase('ru'))){e.tags.push(tag);changed++;}
+    if(!Array.isArray(e[field]))e[field]=[];
+    const exists=e[field].some(existing=>String(existing).trim().toLocaleLowerCase('ru')===value.toLocaleLowerCase('ru'));
+    if(!exists){e[field].push(value);changed++;}
   });
   selectedExerciseIds.clear();
   $('bulkTagInput').value='';
   updateBulkTagOptions();
   await persist();
-  toast(changed?`Тег добавлен в ${changed} карточек`:'У выбранных карточек такой тег уже есть');
+  const noun=field==='tags'?'тег':field==='zones'?'область':'вид удара';
+  toast(changed?`Добавлено: ${noun} — в ${changed} карточек`:'У выбранных карточек такое значение уже есть');
 });
 
 function renderTopicManager(){
