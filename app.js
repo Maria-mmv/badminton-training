@@ -3,7 +3,7 @@ const SYNC_EXEC_URL='https://script.google.com/macros/s/AKfycbwi4GIckQ2ZmeMlUu54
 const SYNC_CHANNEL='badminton-training-sync';
 const DEFAULT_TOPICS=['Техника','Перемещения','Игра у сетки','Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
 let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[];
-let selectionMode=false;
+let selectionMode=false, lightboxImages=[], lightboxIndex=0;
 const selectedExerciseIds=new Set();
 let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncBridgeReady=false, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
 const $=id=>document.getElementById(id);
@@ -114,7 +114,7 @@ function renderLibrary(){
   list.forEach(e=>{
     const card=document.createElement('article');card.className='exercise-card';
     const thumb=document.createElement('div');thumb.className='thumb';
-    if(e.images?.[0]){const img=document.createElement('img');img.src=e.images[0].data;thumb.append(img);}else thumb.textContent='🏸';
+    if(e.images?.[0]){const img=document.createElement('img');img.src=e.images[0].data;bindImageZoom(img,e.images,0);thumb.append(img);}else thumb.textContent='🏸';
     const body=document.createElement('div');body.className='card-body';
     if(selectionMode){
       const selectLabel=document.createElement('label');selectLabel.className='card-select';
@@ -230,9 +230,9 @@ function videoRow(v={title:'',url:'',note:''}){const row=document.createElement(
 $('addVideoBtn').onclick=()=>videoRow();
 $('exImages').addEventListener('change',async ev=>{for(const file of ev.target.files){if(!file.type.startsWith('image/'))continue;const data=await resizeImage(file);pendingImages.push({name:file.name,data});}renderImagePreviews();ev.target.value='';});
 function resizeImage(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>{const img=new Image();img.onload=()=>{const max=1400,scale=Math.min(1,max/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.round(img.width*scale);canvas.height=Math.round(img.height*scale);canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',.82));};img.onerror=reject;img.src=reader.result;};reader.onerror=reject;reader.readAsDataURL(file);});}
-function renderImagePreviews(){const box=$('imagePreview');box.innerHTML='';pendingImages.forEach((im,i)=>{const wrap=document.createElement('div');wrap.style.position='relative';const img=document.createElement('img');img.src=im.data;img.title=i===0&&!existingImageUrls.length?'Главное изображение':'Изображение галереи';const b=document.createElement('button');b.className='mini-btn';b.type='button';b.textContent='×';b.onclick=()=>{pendingImages.splice(i,1);renderImagePreviews();};wrap.append(img,b);box.append(wrap);});}
+function renderImagePreviews(){const box=$('imagePreview');box.innerHTML='';const allImages=[...existingImageUrls,...pendingImages];pendingImages.forEach((im,i)=>{const wrap=document.createElement('div');wrap.style.position='relative';const img=document.createElement('img');img.src=im.data;img.title='Нажмите, чтобы увеличить';bindImageZoom(img,allImages,existingImageUrls.length+i);const b=document.createElement('button');b.className='mini-btn';b.type='button';b.textContent='×';b.onclick=()=>{pendingImages.splice(i,1);renderImagePreviews();};wrap.append(img,b);box.append(wrap);});}
 function editExercise(id){const e=exercises.find(x=>x.id===id);if(!e)return;resetForm();$('dialogTitle').textContent='Редактировать упражнение';$('exerciseId').value=e.id;$('exName').value=e.name;$('exDescription').value=e.description||'';$('exTopic').value=e.topic;$('exLevel').value=e.level;$('exDuration').value=e.duration;$('exFormat').value=e.format||'Индивидуально';$('exShots').value=(e.shots||[]).join(', ');$('exTags').value=(e.tags||[]).join(', ');$('exZones').value=(e.zones||[]).join(', ');$('exEquipment').value=e.equipment||'';$('exNotes').value=e.notes||'';existingImageUrls=structuredClone(e.images||[]);renderExistingImages();(e.videos||[]).forEach(videoRow);$('deleteExerciseBtn').classList.remove('hidden');$('exerciseDialog').showModal();}
-function renderExistingImages(){const box=$('existingImages');box.innerHTML='';existingImageUrls.forEach((im,i)=>{const wrap=document.createElement('div');wrap.style.position='relative';const img=document.createElement('img');img.src=im.data;img.title=i===0?'Главное изображение':'Галерея';const b=document.createElement('button');b.type='button';b.className='mini-btn';b.textContent='×';b.onclick=()=>{existingImageUrls.splice(i,1);renderExistingImages();};wrap.append(img,b);box.append(wrap);});}
+function renderExistingImages(){const box=$('existingImages');box.innerHTML='';const allImages=[...existingImageUrls,...pendingImages];existingImageUrls.forEach((im,i)=>{const wrap=document.createElement('div');wrap.style.position='relative';const img=document.createElement('img');img.src=im.data;img.title='Нажмите, чтобы увеличить';bindImageZoom(img,allImages,i);const b=document.createElement('button');b.type='button';b.className='mini-btn';b.textContent='×';b.onclick=()=>{existingImageUrls.splice(i,1);renderExistingImages();};wrap.append(img,b);box.append(wrap);});}
 $('addExerciseBtn').onclick=()=>{resetForm();$('exerciseDialog').showModal();};
 $('closeDialog').onclick=()=>$('exerciseDialog').close();
 async function deleteExerciseById(id){
@@ -255,7 +255,111 @@ async function copyLink(value){
   if(copied)toast('Ссылка скопирована');else window.prompt('Скопируйте ссылку:',value);
 }
 
-function showDetail(id){const e=exercises.find(x=>x.id===id);if(!e)return;selectedDetail=id;$('detailTitle').textContent=e.name;$('detailMeta').textContent=`${e.topic||'Без темы'} · ${e.level||'—'} · ${e.duration||'—'} мин · ${e.format||''}`;const box=$('detailContent');box.innerHTML='';if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;box.append(img);}if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach(im=>{const img=document.createElement('img');img.src=im.data;gallery.append(img);});box.append(gallery);}const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');p.textContent=content;s.append(h,p);box.append(s);};section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Область применения (зона корта / часть тела)',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);if(e.videos?.length){
+// Safe, offline Markdown renderer for exercise descriptions.
+// It supports headings, bold/italic, inline code, links, blockquotes and nested lists.
+function appendInlineMarkdown(parent,text){
+  const pattern=/(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
+  const source=String(text??'');let cursor=0,match;
+  while((match=pattern.exec(source))){
+    if(match.index>cursor)parent.append(document.createTextNode(source.slice(cursor,match.index)));
+    const token=match[0];let node=null;
+    if(token.startsWith('**')||token.startsWith('__')){node=document.createElement('strong');node.textContent=token.slice(2,-2);}
+    else if(token.startsWith('`')){node=document.createElement('code');node.textContent=token.slice(1,-1);}
+    else if(token.startsWith('*')||token.startsWith('_')){node=document.createElement('em');node.textContent=token.slice(1,-1);}
+    else{
+      const link=token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+      if(link){try{const url=new URL(link[2]);if(url.protocol==='http:'||url.protocol==='https:'){node=document.createElement('a');node.textContent=link[1];node.href=url.href;node.target='_blank';node.rel='noopener noreferrer';}}catch{}}
+      if(!node)node=document.createTextNode(token);
+    }
+    parent.append(node);cursor=pattern.lastIndex;
+  }
+  if(cursor<source.length)parent.append(document.createTextNode(source.slice(cursor)));
+}
+function markdownListMarker(line){
+  const match=String(line).match(/^(\s*)([-+*]|\d+[.)])\s+(.*)$/);
+  if(!match)return null;
+  return {indent:match[1].replace(/\t/g,'    ').length,type:/^\d/.test(match[2])?'ol':'ul',text:match[3]};
+}
+function parseMarkdownList(lines,start,indent){
+  const first=markdownListMarker(lines[start]);const list=document.createElement(first.type);let i=start,lastItem=null;
+  while(i<lines.length){
+    if(!lines[i].trim()){
+      let next=i;while(next<lines.length&&!lines[next].trim())next++;
+      const following=markdownListMarker(lines[next]);
+      if(following&&following.indent>=indent){i=next;continue;}
+      break;
+    }
+    const marker=markdownListMarker(lines[i]);
+    if(!marker){
+      const leading=(lines[i].match(/^\s*/)||[''])[0].replace(/\t/g,'    ').length;
+      if(lastItem&&leading>indent){lastItem.append(document.createElement('br'));appendInlineMarkdown(lastItem,lines[i].trim());i++;continue;}
+      break;
+    }
+    if(marker.indent<indent)break;
+    if(marker.indent>indent){
+      if(lastItem){const nested=parseMarkdownList(lines,i,marker.indent);lastItem.append(nested.node);i=nested.next;continue;}
+      break;
+    }
+    if(marker.type!==first.type)break;
+    lastItem=document.createElement('li');appendInlineMarkdown(lastItem,marker.text);list.append(lastItem);i++;
+  }
+  return {node:list,next:i};
+}
+function renderMarkdown(markdown){
+  const root=document.createElement('div');root.className='markdown-content';
+  const lines=String(markdown??'').replace(/\r\n?/g,'\n').split('\n');let i=0;
+  while(i<lines.length){
+    if(!lines[i].trim()){i++;continue;}
+    const heading=lines[i].match(/^(#{1,3})\s+(.+)$/);
+    if(heading){const h=document.createElement(`h${heading[1].length}`);appendInlineMarkdown(h,heading[2]);root.append(h);i++;continue;}
+    const marker=markdownListMarker(lines[i]);
+    if(marker){const parsed=parseMarkdownList(lines,i,marker.indent);root.append(parsed.node);i=Math.max(i+1,parsed.next);continue;}
+    if(/^>\s?/.test(lines[i])){
+      const quote=document.createElement('blockquote');
+      while(i<lines.length&&/^>\s?/.test(lines[i])){const line=lines[i].replace(/^>\s?/,'');if(quote.childNodes.length)quote.append(document.createElement('br'));appendInlineMarkdown(quote,line);i++;}
+      root.append(quote);continue;
+    }
+    const paragraph=document.createElement('p');
+    while(i<lines.length&&lines[i].trim()&&!/^(#{1,3})\s+/.test(lines[i])&&!markdownListMarker(lines[i])&&!/^>\s?/.test(lines[i])){
+      if(paragraph.childNodes.length)paragraph.append(document.createElement('br'));
+      appendInlineMarkdown(paragraph,lines[i]);i++;
+    }
+    if(paragraph.childNodes.length)root.append(paragraph);else i++;
+  }
+  return root;
+}
+
+// Tap any exercise image to open it in a full-screen viewer.
+function bindImageZoom(img,images,index){
+  img.classList.add('zoomable-image');img.title='Нажмите, чтобы увеличить';img.setAttribute('role','button');img.tabIndex=0;
+  img.setAttribute('aria-label','Открыть изображение в увеличенном размере');
+  const open=()=>openImageViewer(images,index);
+  img.addEventListener('click',open);
+  img.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();open();}});
+}
+function openImageViewer(images,index=0){
+  lightboxImages=(images||[]).filter(im=>im&&typeof im.data==='string'&&im.data);
+  if(!lightboxImages.length)return;
+  lightboxIndex=Math.max(0,Math.min(Number(index)||0,lightboxImages.length-1));
+  updateImageViewer();
+  if(!$('imageViewer').open)$('imageViewer').showModal();
+}
+function updateImageViewer(){
+  const image=lightboxImages[lightboxIndex];$('imageViewerImage').src=image.data;
+  $('imageViewerImage').alt=image.name||`Изображение ${lightboxIndex+1}`;
+  $('imageViewerCount').textContent=`${lightboxIndex+1} / ${lightboxImages.length}`;
+  $('imageViewerCaption').textContent=image.name||'';
+  $('imageViewerPrev').disabled=lightboxImages.length<2;
+  $('imageViewerNext').disabled=lightboxImages.length<2;
+}
+function moveImageViewer(delta){if(!lightboxImages.length)return;lightboxIndex=(lightboxIndex+delta+lightboxImages.length)%lightboxImages.length;updateImageViewer();}
+$('imageViewerPrev').onclick=()=>moveImageViewer(-1);
+$('imageViewerNext').onclick=()=>moveImageViewer(1);
+$('closeImageViewer').onclick=()=>$('imageViewer').close();
+$('imageViewer').addEventListener('click',ev=>{if(ev.target===$('imageViewer'))$('imageViewer').close();});
+$('imageViewer').addEventListener('keydown',ev=>{if(ev.key==='ArrowLeft'){ev.preventDefault();moveImageViewer(-1);}else if(ev.key==='ArrowRight'){ev.preventDefault();moveImageViewer(1);}});
+
+function showDetail(id){const e=exercises.find(x=>x.id===id);if(!e)return;selectedDetail=id;$('detailTitle').textContent=e.name;$('detailMeta').textContent=`${e.topic||'Без темы'} · ${e.level||'—'} · ${e.duration||'—'} мин · ${e.format||''}`;const box=$('detailContent');box.innerHTML='';if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;bindImageZoom(img,e.images,0);box.append(img);}if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach((im,i)=>{const img=document.createElement('img');img.src=im.data;bindImageZoom(img,e.images,i+1);gallery.append(img);});box.append(gallery);}const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');if(title==='Описание')p.append(renderMarkdown(content));else p.textContent=content;s.append(h,p);box.append(s);};section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Область применения (зона корта / часть тела)',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);if(e.videos?.length){
   const s=document.createElement('div');s.className='detail-section';
   const h=document.createElement('h3');h.textContent='Видео и ссылки';s.append(h);
   e.videos.forEach(v=>{

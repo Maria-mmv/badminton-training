@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v7-bulk-target-fix';
+const CACHE = 'badminton-training-v8-markdown-image-viewer';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {
