@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v4-jsonp-sync';
+const CACHE = 'badminton-training-v5-library-tools';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

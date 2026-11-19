@@ -28,12 +28,23 @@
     <section id="library" class="panel active">
       <div class="section-head">
         <div><h2>Библиотека упражнений</h2><p id="exerciseCount" class="muted">0 упражнений</p></div>
-        <button id="addExerciseBtn" class="button primary">＋ Добавить</button>
+        <div class="header-actions"><button id="manageTopicsBtn" class="button ghost">Темы</button><button id="addExerciseBtn" class="button primary">＋ Добавить</button></div>
       </div>
       <div class="filters">
         <input id="searchInput" type="search" placeholder="Поиск по названию, описанию, тегам…">
         <select id="topicFilter"><option value="">Все темы</option></select>
         <select id="levelFilter"><option value="">Любой уровень</option><option>Начальный</option><option>Средний</option><option>Продвинутый</option></select>
+      </div>
+      <div class="selection-toolbar">
+        <button id="toggleSelectionBtn" class="button ghost small" type="button">Выбрать несколько</button>
+        <div id="bulkTools" class="bulk-tools hidden">
+          <span id="selectedCount" class="muted">Выбрано карточек: 0</span>
+          <button id="selectAllVisibleBtn" class="button ghost small" type="button">Выбрать видимые</button>
+          <input id="bulkTagInput" list="existingTagOptions" placeholder="Тег для выбранных карточек">
+          <datalist id="existingTagOptions"></datalist>
+          <button id="applyBulkTagBtn" class="button primary small" type="button" disabled>Добавить тег</button>
+          <button id="clearSelectionBtn" class="button ghost small" type="button" disabled>Снять выбор</button>
+        </div>
       </div>
       <div id="exerciseGrid" class="exercise-grid"></div>
       <div id="emptyLibrary" class="empty hidden">Пока нет упражнений. Добавьте первое — библиотека будет пополняться постепенно.</div>
@@ -83,6 +94,13 @@
     </section>
   </main>
 
+  <dialog id="topicsDialog">
+    <div class="dialog-head"><div><h2>Управление темами</h2><p class="muted">Добавляйте новые темы или переименовывайте и удаляйте существующие.</p></div><button type="button" class="icon-button" id="closeTopicsDialog" aria-label="Закрыть">✕</button></div>
+    <div class="topic-add-row"><input id="newTopicInput" type="text" placeholder="Название новой темы"><button id="addTopicBtn" type="button" class="button primary">Добавить</button></div>
+    <div id="topicList" class="stack topic-list"></div>
+    <div class="actions"><button id="closeTopicsDone" type="button" class="button ghost">Готово</button></div>
+  </dialog>
+
   <dialog id="exerciseDialog">
     <form id="exerciseForm" method="dialog">
       <div class="dialog-head"><div><h2 id="dialogTitle">Новое упражнение</h2><p class="muted">Основная тема, удары и теги хранятся отдельно.</p></div><button type="button" class="icon-button" id="closeDialog" aria-label="Закрыть">✕</button></div>
@@ -99,7 +117,7 @@
       </div>
       <label class="field">Виды ударов <span class="hint">(через запятую)</span><input id="exShots" placeholder="Clear, Drop, Smash"></label>
       <label class="field">Дополнительные теги <span class="hint">(через запятую)</span><input id="exTags" placeholder="Скорость, точность, координация"></label>
-      <label class="field">Зоны корта <span class="hint">(через запятую)</span><input id="exZones" placeholder="Задняя линия, сетка"></label>
+      <label class="field">Область применения <span class="hint">(зона корта или часть тела; через запятую)</span><input id="exZones" placeholder="Задняя линия, сетка, ноги, плечи"></label>
       <label class="field">Инвентарь<input id="exEquipment" placeholder="Ракетка, воланы…"></label>
       <label class="field">Постоянные заметки<textarea id="exNotes" rows="2" placeholder="Личные подсказки по технике…"></textarea></label>
       <div class="media-block">
