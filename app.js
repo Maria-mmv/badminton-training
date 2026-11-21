@@ -101,11 +101,16 @@ function updateBulkTagOptions(){
 function renderBulkTools(){
   const tools=$('bulkTools');
   if(!tools)return;
+  const selectedCount=selectedExerciseIds.size;
+  const filteredCount=getFilteredExercises().length;
   tools.classList.toggle('hidden',!selectionMode);
   $('toggleSelectionBtn').textContent=selectionMode?'Завершить выбор':'Выбрать несколько';
-  $('selectedCount').textContent=`Выбрано карточек: ${selectedExerciseIds.size}`;
-  $('applyBulkTagBtn').disabled=selectedExerciseIds.size===0;
-  $('clearSelectionBtn').disabled=selectedExerciseIds.size===0;
+  $('selectedCount').textContent=`Выбрано карточек: ${selectedCount}`;
+  $('selectAllVisibleBtn').textContent=`Выбрать все найденные (${filteredCount})`;
+  $('applyBulkTagBtn').disabled=selectedCount===0;
+  $('deleteSelectedBtn').textContent=`Удалить выбранные (${selectedCount})`;
+  $('deleteSelectedBtn').disabled=selectedCount===0;
+  $('clearSelectionBtn').disabled=selectedCount===0;
 }
 function renderLibrary(){
   const list=getFilteredExercises();
@@ -145,8 +150,26 @@ $('toggleSelectionBtn').addEventListener('click',()=>{
   renderLibrary();
 });
 $('selectAllVisibleBtn').addEventListener('click',()=>{
-  getFilteredExercises().forEach(e=>selectedExerciseIds.add(String(e.id)));
+  // Replace the previous selection with exactly the cards matching the current
+  // search text and active topic/level filters.
+  const matches=getFilteredExercises();
+  selectedExerciseIds.clear();
+  matches.forEach(e=>selectedExerciseIds.add(String(e.id)));
   renderLibrary();
+  toast(`Выбрано карточек по текущему поиску: ${matches.length}`);
+});
+$('deleteSelectedBtn').addEventListener('click',async()=>{
+  const selectedIds=new Set([...selectedExerciseIds].map(String));
+  const targets=exercises.filter(e=>selectedIds.has(String(e.id)));
+  if(!targets.length){toast('Нет выбранных карточек для удаления');return;}
+  const sample=targets.slice(0,4).map(e=>`• ${e.name}`).join('\n');
+  const more=targets.length>4?`\n…и ещё ${targets.length-4}`:'';
+  const message=`Удалить ${targets.length} карточек из библиотеки?\n\n${sample}${more}\n\nЭто действие нельзя отменить. Сохранённые планы не изменятся: упражнения останутся в них как сохранённые копии.`;
+  if(!confirm(message))return;
+  exercises=exercises.filter(e=>!selectedIds.has(String(e.id)));
+  selectedExerciseIds.clear();
+  await persist();
+  toast(`Удалено карточек: ${targets.length}`);
 });
 $('clearSelectionBtn').addEventListener('click',()=>{selectedExerciseIds.clear();renderLibrary();});
 $('bulkTagType').addEventListener('change',()=>{
@@ -391,7 +414,7 @@ function parseMarkdownExerciseCards(markdown){
     let description='';const descMatch=body.match(/\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*\s*\n+~~~(?:markdown)?\s*\n([\s\S]*?)\n~~~/i);
     if(descMatch)description=descMatch[1].trim();else{const alt=body.match(/\*\*Описание[^\n]*\*\*\s*\n+([\s\S]*?)(?=\n\*\*[^\n]+\*\*\s*:|$)/i);if(alt)description=alt[1].trim();}
     const title=match[1].trim();
-    return {name:title,topic:readField('Основная тема'),tags:splitImportedList(readField('Дополнительные теги')),zones:splitImportedList(readField('Область применения')),shots:splitImportedList(readField('Виды ударов')),description};
+    return {name:title,topic:readField('Основная тема'),tags:splitImportedList(readField('Дополнительные теги')),zones:splitImportedList(readField('Область применения')),shots:normalizeShotTypes(splitImportedList(readField('Виды ударов'))),description};
   }).filter(card=>card.name);
 }
 async function importMarkdownCards(file){
