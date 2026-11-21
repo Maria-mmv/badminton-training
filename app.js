@@ -391,7 +391,7 @@ function parseMarkdownExerciseCards(markdown){
     let description='';const descMatch=body.match(/\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*\s*\n+~~~(?:markdown)?\s*\n([\s\S]*?)\n~~~/i);
     if(descMatch)description=descMatch[1].trim();else{const alt=body.match(/\*\*Описание[^\n]*\*\*\s*\n+([\s\S]*?)(?=\n\*\*[^\n]+\*\*\s*:|$)/i);if(alt)description=alt[1].trim();}
     const title=match[1].trim();
-    return {name:title,topic:readField('Основная тема'),tags:splitImportedList(readField('Дополнительные теги')),zones:splitImportedList(readField('Область применения')),shots:normalizeShotTypes(splitImportedList(readField('Виды ударов'))),description};
+    return {name:title,topic:readField('Основная тема'),tags:splitImportedList(readField('Дополнительные теги')),zones:splitImportedList(readField('Область применения')),shots:splitImportedList(readField('Виды ударов')),description};
   }).filter(card=>card.name);
 }
 async function importMarkdownCards(file){
