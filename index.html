@@ -73,10 +73,11 @@
 
     <section id="data" class="panel">
       <h2>Резервная копия и перенос данных</h2>
-      <p class="muted">Данные хранятся в браузере на этом устройстве. Экспортируйте резервную копию, чтобы перенести библиотеку на другое устройство или восстановить её позже.</p>
+      <p class="muted">Данные хранятся в браузере на этом устройстве. Экспортируйте резервную копию, чтобы перенести библиотеку на другое устройство или восстановить её позже. Markdown-импорт добавляет новые карточки и пропускает совпадения по названию.</p>
       <div class="data-actions">
         <button id="exportBtn" class="button primary">Экспортировать JSON</button>
         <label class="button ghost file-button">Импортировать JSON<input id="importInput" type="file" accept="application/json,.json"></label>
+        <label class="button ghost file-button">Импортировать карточки Markdown<input id="markdownImportInput" type="file" accept=".md,text/markdown,text/plain"></label>
       </div>
       <div class="sync-card">
         <h3>Синхронизация через Google Drive</h3>
@@ -121,7 +122,7 @@
         <label class="field">Время по умолчанию, мин<input id="exDuration" type="number" min="1" value="8"></label>
         <label class="field">Формат<select id="exFormat"><option>Индивидуально</option><option>С партнёром</option><option>С тренером</option><option>Многоволановое</option><option>Игровое упражнение</option></select></label>
       </div>
-      <label class="field">Виды ударов <span class="hint">(через запятую)</span><input id="exShots" placeholder="Clear, Drop, Smash"></label>
+      <label class="field">Виды ударов <span class="hint">(через запятую; русское и английское названия)</span><input id="exShots" placeholder="Укороченный (Drop shot), Смеш (Smash), Плоский удар (Drive)"></label>
       <label class="field">Дополнительные теги <span class="hint">(через запятую)</span><input id="exTags" placeholder="Скорость, точность, координация"></label>
       <label class="field">Область применения <span class="hint">(зона корта или часть тела; через запятую)</span><input id="exZones" placeholder="Задняя линия, сетка, ноги, плечи"></label>
       <label class="field">Инвентарь<input id="exEquipment" placeholder="Ракетка, воланы…"></label>
