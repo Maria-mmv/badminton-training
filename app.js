@@ -19,8 +19,27 @@ async function loadAll(){
   const savedTopics=await getRecord('topics');
   topics=Array.isArray(savedTopics)?savedTopics:collectLegacyTopics(exercises);
   syncMeta=await getRecord('syncMeta')||{revision:0,dirty:false,lastSyncedAt:null};
+  // Repair cards imported by the older Markdown parser: it could accidentally
+  // copy the next bold field heading into an empty tags/zones/shots field.
+  if(cleanMarkdownFieldArtifacts()){
+    await putRecord('exercises',exercises);
+    syncMeta={...syncMeta,dirty:true,localUpdatedAt:new Date().toISOString()};
+    await putRecord('syncMeta',syncMeta);
+  }
   fillTopics();
   renderAll();
+}
+function cleanMarkdownFieldArtifacts(){
+  const fieldHeading=/^\s*\*\*(?:Основная тема|Дополнительные теги|Область применения|Виды ударов|Видео)\s*:\*\*/i;
+  let changed=false;
+  for(const exercise of exercises){
+    for(const field of ['tags','zones','shots']){
+      if(!Array.isArray(exercise[field]))continue;
+      const cleaned=exercise[field].filter(value=>!fieldHeading.test(String(value??'')));
+      if(cleaned.length!==exercise[field].length){exercise[field]=cleaned;changed=true;}
+    }
+  }
+  return changed;
 }
 async function persist(){
   await putRecord('exercises',exercises);
@@ -410,7 +429,13 @@ function parseMarkdownExerciseCards(markdown){
   const blocks=[...source.matchAll(/^##\s*Карточка\s+\d+\.\s*(.+?)\s*$/gmi)];
   return blocks.map((match,index)=>{
     const begin=match.index+match[0].length;const end=index+1<blocks.length?blocks[index+1].index:source.length;const body=source.slice(begin,end);
-    const readField=(label)=>{const re=new RegExp('^\\*\\*'+label+'\\s*:\\*\\*\\s*(.*)$','mi');return body.match(re)?.[1]?.trim()||'';};
+    const readField=(label)=>{
+      const escaped=label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      // Use horizontal whitespace only. \s* would cross blank lines and
+      // swallow the next Markdown field heading when this field is empty.
+      const re=new RegExp('^[\\t ]*\\*\\*'+escaped+'[\\t ]*:[\\t ]*\\*\\*[\\t ]*(.*)$','mi');
+      return body.match(re)?.[1]?.trim()||'';
+    };
     let description='';const descMatch=body.match(/\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*\s*\n+~~~(?:markdown)?\s*\n([\s\S]*?)\n~~~/i);
     if(descMatch)description=descMatch[1].trim();else{const alt=body.match(/\*\*Описание[^\n]*\*\*\s*\n+([\s\S]*?)(?=\n\*\*[^\n]+\*\*\s*:|$)/i);if(alt)description=alt[1].trim();}
     const title=match[1].trim();
