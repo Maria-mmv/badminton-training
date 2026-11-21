@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v10-bulk-select-delete';
+const CACHE = 'badminton-training-v11-fix-markdown-fields';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

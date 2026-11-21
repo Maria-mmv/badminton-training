@@ -19,24 +19,95 @@ async function loadAll(){
   const savedTopics=await getRecord('topics');
   topics=Array.isArray(savedTopics)?savedTopics:collectLegacyTopics(exercises);
   syncMeta=await getRecord('syncMeta')||{revision:0,dirty:false,lastSyncedAt:null};
-  // Repair cards imported by the older Markdown parser: it could accidentally
-  // copy the next bold field heading into an empty tags/zones/shots field.
-  if(cleanMarkdownFieldArtifacts()){
+  // Repair malformed field headings left by earlier Markdown imports.
+  // Do this for both the library and exercise snapshots inside saved plans.
+  let repaired=cleanMarkdownFieldArtifacts(exercises);
+  for(const plan of plans){
+    if(Array.isArray(plan.items)) repaired=cleanMarkdownFieldArtifacts(plan.items)||repaired;
+  }
+  if(repaired){
     await putRecord('exercises',exercises);
+    await putRecord('plans',plans);
     syncMeta={...syncMeta,dirty:true,localUpdatedAt:new Date().toISOString()};
     await putRecord('syncMeta',syncMeta);
   }
   fillTopics();
   renderAll();
 }
-function cleanMarkdownFieldArtifacts(){
-  const fieldHeading=/^\s*\*\*(?:Основная тема|Дополнительные теги|Область применения|Виды ударов|Видео)\s*:\*\*/i;
+function decodePossibleMarkdownArtifact(value){
+  return String(value??'')
+    .replace(/&#x20;|&#32;|&nbsp;/gi,' ')
+    .replace(/\\\*/g,'*')
+    .replace(/&#x2a;|&#42;|&ast;/gi,'*')
+    .trim();
+}
+function getAccidentalFieldHeading(value){
+  const text=decodePossibleMarkdownArtifact(value);
+  const match=text.match(/^\*\*\s*(Основная тема|Дополнительные теги|Область применения|Виды ударов|Видео)\s*:\s*\*\*\s*(.*)$/i);
+  return match?{label:match[1].toLocaleLowerCase('ru'),value:match[2].trim()}:null;
+}
+function asStoredList(value){
+  if(Array.isArray(value))return value.map(item=>String(item??'').trim()).filter(Boolean);
+  if(value===null||value===undefined||value==='')return [];
+  return String(value).split(/[,;；、]/).map(item=>item.trim()).filter(Boolean);
+}
+function appendUniqueFieldValues(target,values){
+  for(const value of values){
+    const item=String(value??'').trim();
+    if(item&&!target.some(existing=>String(existing).toLocaleLowerCase('ru')===item.toLocaleLowerCase('ru')))target.push(item);
+  }
+}
+function expandLegacyBilingualShot(value){
+  const text=String(value??'').trim();
+  const match=text.match(/^(.+?)\s+\(([A-Za-z][A-Za-z -]*)\)$/);
+  if(!match)return [text];
+  let russian=match[1].trim();
+  if(russian.toLocaleLowerCase('ru')==='укороченный')russian='Укороченный удар';
+  return [russian,match[2].trim()];
+}
+function cleanMarkdownFieldArtifacts(items=exercises){
+  // The older parser used \s* after a field label. For an empty value that
+  // could consume the newline and put the next field heading into this field.
+  // Repair those records, including copies embedded in saved plans.
+  const destination={
+    'дополнительные теги':'tags',
+    'область применения':'zones',
+    'виды ударов':'shots'
+  };
   let changed=false;
-  for(const exercise of exercises){
+  for(const exercise of items||[]){
+    if(!exercise||typeof exercise!=='object')continue;
+    const fields={};
     for(const field of ['tags','zones','shots']){
-      if(!Array.isArray(exercise[field]))continue;
-      const cleaned=exercise[field].filter(value=>!fieldHeading.test(String(value??'')));
-      if(cleaned.length!==exercise[field].length){exercise[field]=cleaned;changed=true;}
+      const normalized=asStoredList(exercise[field]);
+      if(!Array.isArray(exercise[field])||JSON.stringify(normalized)!==JSON.stringify(exercise[field]))changed=true;
+      fields[field]=[];
+    }
+    const misplaced=[];
+    // First keep all values that already belong to their own fields.
+    for(const field of ['tags','zones','shots']){
+      for(const rawValue of asStoredList(exercise[field])){
+        const artifact=getAccidentalFieldHeading(rawValue);
+        if(artifact){misplaced.push(artifact);changed=true;}
+        else{
+          const decoded=decodePossibleMarkdownArtifact(rawValue);
+          appendUniqueFieldValues(fields[field],field==='shots'?expandLegacyBilingualShot(decoded):[decoded]);
+        }
+      }
+    }
+    // Only recover text from a misplaced heading if its correct field is empty.
+    // Correct values are collected first, so this cannot create duplicates.
+    for(const artifact of misplaced){
+      const targetField=destination[artifact.label];
+      if(targetField&&artifact.value&&!fields[targetField].length){
+        appendUniqueFieldValues(fields[targetField],artifact.value.split(/[,;；、]/).map(x=>x.trim()).filter(Boolean));
+      }
+    }
+    for(const field of ['tags','zones','shots']){
+      if(JSON.stringify(exercise[field]??[])!==JSON.stringify(fields[field])){
+        exercise[field]=fields[field];
+        changed=true;
+      }
     }
   }
   return changed;
@@ -428,18 +499,35 @@ function parseMarkdownExerciseCards(markdown){
   const source=String(markdown||'').replace(/\r\n?/g,'\n');
   const blocks=[...source.matchAll(/^##\s*Карточка\s+\d+\.\s*(.+?)\s*$/gmi)];
   return blocks.map((match,index)=>{
-    const begin=match.index+match[0].length;const end=index+1<blocks.length?blocks[index+1].index:source.length;const body=source.slice(begin,end);
+    const begin=match.index+match[0].length;
+    const end=index+1<blocks.length?blocks[index+1].index:source.length;
+    const body=source.slice(begin,end);
+    const metadata=body.split(/^\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*/mi)[0];
     const readField=(label)=>{
       const escaped=label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-      // Use horizontal whitespace only. \s* would cross blank lines and
-      // swallow the next Markdown field heading when this field is empty.
-      const re=new RegExp('^[\\t ]*\\*\\*'+escaped+'[\\t ]*:[\\t ]*\\*\\*[\\t ]*(.*)$','mi');
-      return body.match(re)?.[1]?.trim()||'';
+      // Match a single metadata line only: an empty value stays empty and
+      // cannot consume the heading of the next field.
+      const re=new RegExp('^[\\t ]*\\*\\*'+escaped+'[\\t ]*:[\\t ]*\\*[\\t ]*\\*[\\t ]*(.*)$','mi');
+      const value=metadata.match(re)?.[1]||'';
+      return decodePossibleMarkdownArtifact(value);
     };
-    let description='';const descMatch=body.match(/\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*\s*\n+~~~(?:markdown)?\s*\n([\s\S]*?)\n~~~/i);
-    if(descMatch)description=descMatch[1].trim();else{const alt=body.match(/\*\*Описание[^\n]*\*\*\s*\n+([\s\S]*?)(?=\n\*\*[^\n]+\*\*\s*:|$)/i);if(alt)description=alt[1].trim();}
+    let description='';
+    const descMatch=body.match(/\*\*Описание\s*\(скопировать в поле «Описание»\):\*\*\s*\n+~~~(?:markdown)?\s*\n([\s\S]*?)\n~~~/i);
+    if(descMatch)description=descMatch[1].trim();
+    else{
+      const alt=body.match(/\*\*Описание[^\n]*\*\*\s*\n+([\s\S]*?)(?=\n\*\*[^\n]+\*\*\s*:|$)/i);
+      if(alt)description=alt[1].trim();
+    }
     const title=match[1].trim();
-    return {name:title,topic:readField('Основная тема'),tags:splitImportedList(readField('Дополнительные теги')),zones:splitImportedList(readField('Область применения')),shots:normalizeShotTypes(splitImportedList(readField('Виды ударов'))),description};
+    return {
+      name:title,
+      topic:readField('Основная тема'),
+      tags:splitImportedList(readField('Дополнительные теги')),
+      zones:splitImportedList(readField('Область применения')),
+      // Russian and English shot labels remain separate tags, as in the file.
+      shots:splitImportedList(readField('Виды ударов')),
+      description
+    };
   }).filter(card=>card.name);
 }
 async function importMarkdownCards(file){
@@ -451,7 +539,9 @@ async function importMarkdownCards(file){
   if(!confirm(preview))return;
   unique.forEach((card,index)=>{
     if(card.topic&&!topics.some(t=>t.toLocaleLowerCase('ru')===card.topic.toLocaleLowerCase('ru')))topics.push(card.topic);
-    exercises.push({id:`import-${Date.now()}-${index}-${Math.random().toString(16).slice(2,7)}`,name:card.name,description:card.description,topic:card.topic||'',level:'Начальный',duration:8,format:'Индивидуально',shots:card.shots,tags:card.tags,zones:card.zones,equipment:'',notes:'',images:[],videos:[],personalDifficulty:'',trainingNotes:[]});
+    const imported={id:`import-${Date.now()}-${index}-${Math.random().toString(16).slice(2,7)}`,name:card.name,description:card.description,topic:card.topic||'',level:'Начальный',duration:8,format:'Индивидуально',shots:card.shots,tags:card.tags,zones:card.zones,equipment:'',notes:'',images:[],videos:[],personalDifficulty:'',trainingNotes:[]};
+    cleanMarkdownFieldArtifacts([imported]);
+    exercises.push(imported);
   });
   fillTopics();await persist();toast(`Импортировано карточек: ${unique.length}`);
 }
@@ -593,13 +683,18 @@ async function applyCloudRecord(record){
     exercises=structuredClone(record.data.exercises);
     plans=structuredClone(record.data.plans);
     topics=Array.isArray(record.data.topics)?structuredClone(record.data.topics):collectLegacyTopics(exercises);
+    let repaired=cleanMarkdownFieldArtifacts(exercises);
+    for(const plan of plans){
+      if(Array.isArray(plan.items))repaired=cleanMarkdownFieldArtifacts(plan.items)||repaired;
+    }
     await putRecord('exercises',exercises);
     await putRecord('plans',plans);
     await putRecord('topics',topics);
-    syncMeta={revision:Number(record.revision),dirty:false,lastSyncedAt:record.updatedAt||new Date().toISOString()};
+    syncMeta={revision:Number(record.revision),dirty:repaired,lastSyncedAt:record.updatedAt||new Date().toISOString()};
     await putRecord('syncMeta',syncMeta);
     renderAll();
   }finally{applyingCloudData=false;}
+  if(syncMeta.dirty)scheduleAutoSync();
 }
 async function uploadLocalRecord(baseRevision){
   const data={exercises,plans,topics};
