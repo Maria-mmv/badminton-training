@@ -871,7 +871,7 @@ async function callSyncBridge(action,payload=null){
     const writeId=`${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const body={action:'write',token:syncToken,payload:{...payload,writeId}};
     const json=JSON.stringify(body);
-    if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
+    if(json.length>20*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
 
     try{
       // text/plain is a CORS-safelisted content type, so the browser does not
@@ -968,7 +968,7 @@ async function applyCloudRecord(record){
 async function uploadLocalRecord(baseRevision){
   const data={exercises,plans,topics,workoutHistory};
   const json=JSON.stringify(data);
-  if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
+  if(json.length>20*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
   const result=await callSyncBridge('write',{baseRevision:Number(baseRevision),data});
   if(result && result.conflict) return {conflict:true,current:validateCloudRecord(result.current)};
   if(!result || result.ok!==true) throw new Error('Google Drive не подтвердил сохранение данных.');
