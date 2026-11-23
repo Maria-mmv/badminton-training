@@ -2,7 +2,7 @@ const DB_NAME='badminton-training-db', DB_VERSION=1, STORE='records';
 const SYNC_EXEC_URL='https://script.google.com/macros/s/AKfycbwi4GIckQ2ZmeMlUu54b9ZmqYOUln-ADMRs7hTs54ILgCNGOg73iiB7DAOFL4w4PPVabQ/exec';
 const SYNC_CHANNEL='badminton-training-sync';
 const DEFAULT_TOPICS=['Техника','Перемещения','Игра у сетки','Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
-let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[];
+let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], workoutHistory=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[], activeWorkoutLogPlan=null;
 let selectionMode=false, lightboxImages=[], lightboxIndex=0;
 const selectedExerciseIds=new Set();
 let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncBridgeReady=false, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
@@ -16,6 +16,7 @@ function delRecord(key){return new Promise((resolve,reject)=>{const tx=db.transa
 async function loadAll(){
   exercises=await getRecord('exercises')||[];
   plans=await getRecord('plans')||[];
+  workoutHistory=await getRecord('workoutHistory')||[];
   const savedTopics=await getRecord('topics');
   topics=Array.isArray(savedTopics)?savedTopics:collectLegacyTopics(exercises);
   syncMeta=await getRecord('syncMeta')||{revision:0,dirty:false,lastSyncedAt:null};
@@ -25,9 +26,13 @@ async function loadAll(){
   for(const plan of plans){
     if(Array.isArray(plan.items)) repaired=cleanMarkdownFieldArtifacts(plan.items)||repaired;
   }
+  for(const entry of workoutHistory){
+    if(Array.isArray(entry.items)) repaired=cleanMarkdownFieldArtifacts(entry.items.map(item=>item.exerciseSnapshot).filter(Boolean))||repaired;
+  }
   if(repaired){
     await putRecord('exercises',exercises);
     await putRecord('plans',plans);
+    await putRecord('workoutHistory',workoutHistory);
     syncMeta={...syncMeta,dirty:true,localUpdatedAt:new Date().toISOString()};
     await putRecord('syncMeta',syncMeta);
   }
@@ -116,6 +121,7 @@ async function persist(){
   await putRecord('exercises',exercises);
   await putRecord('plans',plans);
   await putRecord('topics',topics);
+  await putRecord('workoutHistory',workoutHistory);
   if(!applyingCloudData){
     syncMeta={...syncMeta,dirty:true,localUpdatedAt:new Date().toISOString()};
     await putRecord('syncMeta',syncMeta);
@@ -148,9 +154,10 @@ function fillTopics(){
 }
 function renderAll(){
   fillTopics();updateBulkTagOptions();
-  renderLibrary();renderPlan();renderPlans();
+  renderLibrary();renderPlan();renderPlans();renderWorkoutHistory();
   $('exerciseCount').textContent=`${exercises.length} упражнений`;
-  $('storageInfo').textContent=`Локальная копия: ${exercises.length} упражнений и ${plans.length} планов. Фото хранятся в базе браузера и синхронизируются вместе с карточками.`;
+  $('storageInfo').textContent=`Локальная копия: ${exercises.length} упражнений, ${plans.length} планов и ${workoutHistory.length} записей о тренировках. Фото хранятся в базе браузера и синхронизируются вместе с карточками.`;
+  const historyCount=$('workoutHistoryCount');if(historyCount)historyCount.textContent=workoutHistory.length;
   renderBulkTools();
   if(typeof updateSyncUI==='function')updateSyncUI();
 }
@@ -337,7 +344,208 @@ function addToPlan(e){currentPlan.push({...structuredClone(e),itemId:uid(),durat
 function renderPlan(){$('planList').innerHTML='';currentPlan.forEach((e,i)=>{const row=document.createElement('div');row.className='plan-item';const head=document.createElement('div');head.className='plan-item-head';const title=document.createElement('strong');title.textContent=`${i+1}. ${e.name}`;const headActions=document.createElement('div');headActions.className='plan-row-actions';const view=document.createElement('button');view.type='button';view.className='mini-btn';view.textContent='Просмотр';view.onclick=()=>showDetail(e,{readOnly:true});const remove=document.createElement('button');remove.className='mini-btn';remove.textContent='Удалить';remove.onclick=()=>{currentPlan.splice(i,1);renderPlan();};headActions.append(view,remove);head.append(title,headActions);const meta=document.createElement('div');meta.className='muted';meta.textContent=e.topic||'Без темы';const controls=document.createElement('div');controls.className='plan-item-controls';const label=document.createElement('span');label.className='muted';label.textContent='Минуты:';const input=document.createElement('input');input.type='number';input.min='1';input.value=e.duration;input.onchange=()=>{e.duration=Math.max(1,Number(input.value)||1);renderPlan();};const up=document.createElement('button');up.className='mini-btn';up.textContent='↑';up.disabled=i===0;up.onclick=()=>{[currentPlan[i-1],currentPlan[i]]=[currentPlan[i],currentPlan[i-1]];renderPlan();};const down=document.createElement('button');down.className='mini-btn';down.textContent='↓';down.disabled=i===currentPlan.length-1;down.onclick=()=>{[currentPlan[i+1],currentPlan[i]]=[currentPlan[i],currentPlan[i+1]];renderPlan();};controls.append(label,input,up,down);row.append(head,meta,controls);$('planList').append(row);});const total=currentPlan.reduce((s,e)=>s+Number(e.duration||0),0);$('planTotal').textContent=`${total} мин`;$('planItems').textContent=`${currentPlan.length} упражнений`;$('planCount').textContent=currentPlan.length;$('emptyPlan').classList.toggle('hidden',currentPlan.length>0);$('savePlanBtn').disabled=!currentPlan.length;$('clearPlanBtn').disabled=!currentPlan.length;}
 $('clearPlanBtn').onclick=()=>{currentPlan=[];renderPlan();};
 $('savePlanBtn').onclick=async()=>{const name=$('trainingName').value.trim()||'Тренировка';plans.unshift({id:uid(),name,date:new Date().toISOString(),items:structuredClone(currentPlan)});currentPlan=[];await persist();$('trainingName').value='Новая тренировка';switchTab('plans');toast('Тренировка сохранена');};
-function renderPlans(){$('savedPlans').innerHTML='';$('emptyPlans').classList.toggle('hidden',plans.length>0);plans.forEach(p=>{const card=document.createElement('div');card.className='saved-plan';const h=document.createElement('strong');h.textContent=p.name;const d=document.createElement('p');d.className='muted';d.textContent=`${new Date(p.date).toLocaleDateString('ru-RU')} · ${p.items.length} упражнений · ${p.items.reduce((s,x)=>s+Number(x.duration||0),0)} мин`;const itemList=document.createElement('div');itemList.className='saved-plan-items';(p.items||[]).forEach((item,index)=>{const line=document.createElement('div');line.className='saved-plan-item';const name=document.createElement('span');name.textContent=`${index+1}. ${item.name} · ${Number(item.duration||0)} мин`;const view=document.createElement('button');view.type='button';view.className='mini-btn';view.textContent='Карточка';view.onclick=()=>showDetail(item,{readOnly:true});line.append(name,view);itemList.append(line);});const actions=document.createElement('div');actions.className='card-actions';const edit=document.createElement('button');edit.className='button ghost';edit.textContent='Открыть копию';edit.onclick=()=>{$('trainingName').value=p.name+' — копия';currentPlan=structuredClone(p.items).map(x=>({...x,itemId:uid()}));renderPlan();switchTab('builder');};const del=document.createElement('button');del.className='button danger';del.textContent='Удалить';del.onclick=async()=>{if(confirm('Удалить этот план?')){plans=plans.filter(x=>x.id!==p.id);await persist();}};actions.append(edit,del);card.append(h,d,itemList,actions);$('savedPlans').append(card);});}
+function renderPlans(){
+  $('savedPlans').innerHTML='';
+  $('emptyPlans').classList.toggle('hidden',plans.length>0);
+  plans.forEach(p=>{
+    const card=document.createElement('div');card.className='saved-plan';
+    const h=document.createElement('strong');h.textContent=p.name;
+    const items=p.items||[];
+    const d=document.createElement('p');d.className='muted';
+    d.textContent=`${new Date(p.date).toLocaleDateString('ru-RU')} · ${items.length} упражнений · ${items.reduce((s,x)=>s+Number(x.duration||0),0)} мин`;
+    const itemList=document.createElement('div');itemList.className='saved-plan-items';
+    items.forEach((item,index)=>{
+      const line=document.createElement('div');line.className='saved-plan-item';
+      const name=document.createElement('span');name.textContent=`${index+1}. ${item.name} · ${Number(item.duration||0)} мин`;
+      const view=document.createElement('button');view.type='button';view.className='mini-btn';view.textContent='Карточка';view.onclick=()=>showDetail(item,{readOnly:true});
+      line.append(name,view);itemList.append(line);
+    });
+    const actions=document.createElement('div');actions.className='card-actions';
+    const log=document.createElement('button');log.className='button primary';log.type='button';log.textContent='Записать выполнение';log.onclick=()=>openWorkoutLogDialog(p);
+    const edit=document.createElement('button');edit.className='button ghost';edit.type='button';edit.textContent='Открыть копию';
+    edit.onclick=()=>{$('trainingName').value=p.name+' — копия';currentPlan=structuredClone(items).map(x=>({...x,itemId:uid()}));renderPlan();switchTab('builder');};
+    
+function localDateTimeInputValue(date=new Date()){
+  const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
+  return local.toISOString().slice(0,16);
+}
+function compactExerciseSnapshot(item){
+  const snapshot=structuredClone(item||{});
+  // Avoid duplicating large base64 images in every history record. The rest of
+  // the card's text, technique tags and video references remain available.
+  snapshot.images=[];
+  delete snapshot.trainingNotes;
+  delete snapshot.personalDifficulty;
+  return snapshot;
+}
+function openWorkoutLogDialog(plan){
+  activeWorkoutLogPlan=plan;
+  $('workoutLogPlanName').textContent=plan.name||'Тренировка';
+  $('workoutLogDate').value=localDateTimeInputValue();
+  $('workoutLogLocation').value='';
+  $('workoutLogPartners').value='';
+  $('workoutLogNote').value='';
+  const box=$('workoutLogExerciseRows');box.innerHTML='';
+  (plan.items||[]).forEach((item,index)=>{
+    const row=document.createElement('div');row.className='workout-log-exercise';row.dataset.index=String(index);
+    const head=document.createElement('div');head.className='workout-log-exercise-head';
+    const name=document.createElement('strong');name.textContent=`${index+1}. ${item.name||'Упражнение'}`;
+    const planned=document.createElement('span');planned.className='muted';planned.textContent=`План: ${Number(item.duration||0)} мин`;
+    head.append(name,planned);
+    const completeLabel=document.createElement('label');completeLabel.className='workout-log-complete';
+    const complete=document.createElement('input');complete.type='checkbox';complete.checked=true;complete.dataset.logField='completed';
+    completeLabel.append(complete,document.createTextNode('Выполнено'));
+    const fields=document.createElement('div');fields.className='workout-log-fields';
+    const repsLabel=document.createElement('label');repsLabel.className='field';repsLabel.textContent='Повторений / раз';
+    const reps=document.createElement('input');reps.type='number';reps.min='0';reps.step='1';reps.placeholder='Например, 20';reps.dataset.logField='repetitions';repsLabel.append(reps);
+    const minutesLabel=document.createElement('label');minutesLabel.className='field';minutesLabel.textContent='Фактически, мин';
+    const minutes=document.createElement('input');minutes.type='number';minutes.min='0';minutes.step='0.5';minutes.placeholder='Например, 10';minutes.dataset.logField='actualMinutes';minutesLabel.append(minutes);
+    fields.append(repsLabel,minutesLabel);
+    const comment=document.createElement('textarea');comment.rows=2;comment.placeholder='Короткий комментарий: самочувствие, качество, что улучшить…';comment.dataset.logField='comment';
+    row.append(head,completeLabel,fields,comment);box.append(row);
+  });
+  $('workoutLogDialog').showModal();
+}
+$('closeWorkoutLogDialog').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;};
+$('cancelWorkoutLogBtn').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;};
+$('workoutLogForm').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  if(!activeWorkoutLogPlan)return;
+  const dateValue=$('workoutLogDate').value;
+  const date=new Date(dateValue);
+  if(!dateValue||Number.isNaN(date.getTime())){alert('Укажи корректные дату и время тренировки.');return;}
+  const sourceItems=activeWorkoutLogPlan.items||[];
+  const rows=[...$('workoutLogExerciseRows').children];
+  const items=rows.map((row,index)=>{
+    const get=field=>row.querySelector(`[data-log-field="${field}"]`);
+    const repsRaw=get('repetitions').value.trim();
+    const minutesRaw=get('actualMinutes').value.trim();
+    const source=sourceItems[index]||{};
+    return {
+      exerciseId:source.id??null,
+      name:source.name||'Упражнение',
+      topic:source.topic||'',
+      completed:get('completed').checked,
+      plannedMinutes:Number(source.duration)||0,
+      repetitions:repsRaw===''?null:Math.max(0,Number(repsRaw)||0),
+      actualMinutes:minutesRaw===''?null:Math.max(0,Number(minutesRaw)||0),
+      comment:get('comment').value.trim(),
+      exerciseSnapshot:compactExerciseSnapshot(source)
+    };
+  });
+  const record={
+    id:uid(),planId:activeWorkoutLogPlan.id??null,planName:activeWorkoutLogPlan.name||'Тренировка',
+    date:date.toISOString(),location:$('workoutLogLocation').value.trim(),
+    partners:$('workoutLogPartners').value.trim(),note:$('workoutLogNote').value.trim(),items
+  };
+  workoutHistory.unshift(record);
+  activeWorkoutLogPlan=null;
+  $('workoutLogDialog').close();
+  await persist();
+  switchTab('history');
+  toast('Выполнение тренировки записано');
+});
+function createPlanFromHistory(record){
+  currentPlan=(record.items||[]).map(item=>{
+    const current=exercises.find(e=>String(e.id)===String(item.exerciseId));
+    const source=item.exerciseSnapshot||current||{id:item.exerciseId,name:item.name,topic:item.topic||'',duration:item.plannedMinutes||8};
+    return {...structuredClone(source),itemId:uid(),duration:Number(item.actualMinutes)||Number(item.plannedMinutes)||Number(source.duration)||8};
+  });
+  $('trainingName').value=`${record.planName||'Тренировка'} — по журналу`;
+  renderPlan();switchTab('builder');toast('План подготовлен по записи из журнала');
+}
+function formatLoggedDate(value){
+  const date=new Date(value);
+  return Number.isNaN(date.getTime())?String(value||'Дата не указана'):date.toLocaleString('ru-RU',{dateStyle:'medium',timeStyle:'short'});
+}
+function renderWorkoutHistory(){
+  const list=$('workoutHistoryList'),empty=$('emptyWorkoutHistory'),summary=$('workoutHistorySummary'),progress=$('exerciseProgressList');
+  if(!list||!empty||!summary||!progress)return;
+  list.innerHTML='';progress.innerHTML='';
+  const ordered=[...workoutHistory].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const allItems=workoutHistory.flatMap(entry=>entry.items||[]);
+  const completed=allItems.filter(item=>item.completed!==false);
+  const trackedMinutes=completed.reduce((sum,item)=>sum+(Number(item.actualMinutes)||0),0);
+  const trackedReps=completed.reduce((sum,item)=>sum+(Number(item.repetitions)||0),0);
+  summary.innerHTML='';
+  [
+    [workoutHistory.length,'Тренировок'],
+    [completed.length,'Выполненных упражнений'],
+    [`${trackedMinutes} мин`,'Записанное время'],
+    [trackedReps,'Повторений']
+  ].forEach(([value,label])=>{
+    const stat=document.createElement('div');stat.className='history-stat';
+    const strong=document.createElement('strong');strong.textContent=String(value);
+    const caption=document.createElement('span');caption.textContent=label;
+    stat.append(strong,caption);summary.append(stat);
+  });
+  empty.classList.toggle('hidden',ordered.length>0);
+  ordered.forEach(record=>{
+    const card=document.createElement('article');card.className='saved-plan history-card';
+    const head=document.createElement('div');head.className='history-card-head';
+    const title=document.createElement('strong');title.textContent=record.planName||'Тренировка';
+    const date=document.createElement('span');date.className='muted';date.textContent=formatLoggedDate(record.date);
+    head.append(title,date);
+    const items=record.items||[];
+    const done=items.filter(item=>item.completed!==false).length;
+    const minutes=items.filter(item=>item.completed!==false).reduce((sum,item)=>sum+(Number(item.actualMinutes)||0),0);
+    const reps=items.filter(item=>item.completed!==false).reduce((sum,item)=>sum+(Number(item.repetitions)||0),0);
+    const meta=document.createElement('p');meta.className='muted history-meta';
+    const facts=[`${done} из ${items.length} упражнений выполнено`];
+    if(minutes)facts.push(`${minutes} мин`);if(reps)facts.push(`${reps} повторений`);
+    if(record.location)facts.push(`Место: ${record.location}`);if(record.partners)facts.push(`С кем: ${record.partners}`);
+    meta.textContent=facts.join(' · ');
+    card.append(head,meta);
+    if(record.note){const note=document.createElement('p');note.className='history-note';note.textContent=record.note;card.append(note);}
+    const details=document.createElement('details');details.className='history-details';
+    const summaryLine=document.createElement('summary');summaryLine.textContent='Результаты по упражнениям';details.append(summaryLine);
+    items.forEach((item,index)=>{
+      const line=document.createElement('div');line.className='history-exercise-line';
+      const info=document.createElement('div');info.className='history-exercise-info';
+      const exerciseName=document.createElement('strong');exerciseName.textContent=`${index+1}. ${item.name||'Упражнение'}`;
+      const pieces=[item.completed===false?'Не выполнено':'Выполнено'];
+      if(item.repetitions!==null&&item.repetitions!==undefined)pieces.push(`${item.repetitions} раз`);
+      if(item.actualMinutes!==null&&item.actualMinutes!==undefined)pieces.push(`${item.actualMinutes} мин`);
+      const values=document.createElement('span');values.className='muted';values.textContent=pieces.join(' · ');
+      info.append(exerciseName,values);
+      if(item.comment){const comment=document.createElement('p');comment.className='history-exercise-comment';comment.textContent=item.comment;info.append(comment);}
+      const view=document.createElement('button');view.type='button';view.className='mini-btn';view.textContent='Карточка';
+      view.onclick=()=>{const current=exercises.find(e=>String(e.id)===String(item.exerciseId));const snapshot=item.exerciseSnapshot?{...item.exerciseSnapshot,images:current?.images||[]}:current;if(snapshot)showDetail(snapshot,{readOnly:true});else toast('Карточка упражнения больше недоступна');};
+      line.append(info,view);details.append(line);
+    });
+    card.append(details);
+    const actions=document.createElement('div');actions.className='card-actions';
+    const reuse=document.createElement('button');reuse.type='button';reuse.className='button ghost';reuse.textContent='Собрать план по этой записи';reuse.onclick=()=>createPlanFromHistory(record);
+    const remove=document.createElement('button');remove.type='button';remove.className='button danger';remove.textContent='Удалить запись';
+    remove.onclick=async()=>{if(confirm('Удалить эту запись из журнала?')){workoutHistory=workoutHistory.filter(x=>x.id!==record.id);await persist();}};
+    actions.append(reuse,remove);card.append(actions);list.append(card);
+  });
+  const aggregates=new Map();
+  workoutHistory.forEach(record=>{
+    (record.items||[]).forEach(item=>{
+      if(item.completed===false)return;
+      const key=String(item.exerciseId??item.name);
+      if(!aggregates.has(key))aggregates.set(key,{name:item.name||'Упражнение',sessions:0,repetitions:0,minutes:0,lastDate:null});
+      const stat=aggregates.get(key);stat.sessions++;
+      stat.repetitions+=Number(item.repetitions)||0;stat.minutes+=Number(item.actualMinutes)||0;
+      if(!stat.lastDate||new Date(record.date)>new Date(stat.lastDate))stat.lastDate=record.date;
+    });
+  });
+  const sortedStats=[...aggregates.values()].sort((a,b)=>b.sessions-a.sessions||new Date(b.lastDate)-new Date(a.lastDate));
+  if(!sortedStats.length){const p=document.createElement('p');p.className='muted';p.textContent='Статистика появится после первых записанных тренировок.';progress.append(p);}
+  sortedStats.forEach(stat=>{
+    const row=document.createElement('div');row.className='progress-exercise';
+    const name=document.createElement('strong');name.textContent=stat.name;
+    const values=document.createElement('span');values.className='muted';
+    const pieces=[`${stat.sessions} тренировок`];if(stat.repetitions)pieces.push(`${stat.repetitions} повторений`);if(stat.minutes)pieces.push(`${stat.minutes} мин`);pieces.push(`последний раз: ${new Date(stat.lastDate).toLocaleDateString('ru-RU')}`);
+    values.textContent=pieces.join(' · ');row.append(name,values);progress.append(row);
+  });
+}
+const del=document.createElement('button');del.className='button danger';del.type='button';del.textContent='Удалить';
+    del.onclick=async()=>{if(confirm('Удалить этот план? Записи о ранее выполненных тренировках сохранятся.')){plans=plans.filter(x=>x.id!==p.id);await persist();}};
+    actions.append(log,edit,del);card.append(h,d,itemList,actions);$('savedPlans').append(card);
+  });
+}
 function resetForm(){ $('exerciseForm').reset();$('exerciseId').value='';$('exTopic').value=topics[0]||'';$('exDuration').value=8;pendingImages=[];existingImageUrls=[];$('imagePreview').innerHTML='';$('existingImages').innerHTML='';$('videoFields').innerHTML='';$('deleteExerciseBtn').classList.add('hidden');$('dialogTitle').textContent='Новое упражнение';}
 function videoRow(v={title:'',url:'',note:''}){const row=document.createElement('div');row.className='video-row';['title','url','note'].forEach((k,i)=>{const input=document.createElement('input');input.placeholder=['Название видео','https://…','Комментарий'][i];input.value=v[k]||'';input.dataset.key=k;row.append(input);});const rm=document.createElement('button');rm.type='button';rm.className='mini-btn';rm.textContent='×';rm.onclick=()=>row.remove();row.append(rm);$('videoFields').append(row);}
 $('addVideoBtn').onclick=()=>videoRow();
@@ -368,10 +576,27 @@ async function copyLink(value){
   if(copied)toast('Ссылка скопирована');else window.prompt('Скопируйте ссылку:',value);
 }
 
+function getVideoPlatformName(rawUrl){
+  try{
+    const host=new URL(rawUrl).hostname.toLowerCase().replace(/^(www|m|mobile)\./,'');
+    if(host==='youtu.be'||host.endsWith('youtube.com')||host.endsWith('youtube-nocookie.com'))return 'YouTube';
+    if(host==='vk.com'||host.endsWith('.vk.com')||host==='vkvideo.ru'||host.endsWith('.vkvideo.ru'))return 'VK';
+    if(host==='rutube.ru'||host.endsWith('.rutube.ru'))return 'Rutube';
+    if(host==='dzen.ru'||host.endsWith('.dzen.ru'))return 'Дзен';
+    if(host==='t.me'||host.endsWith('.telegram.org'))return 'Telegram';
+    if(host==='instagram.com'||host.endsWith('.instagram.com'))return 'Instagram';
+    if(host==='tiktok.com'||host.endsWith('.tiktok.com'))return 'TikTok';
+    if(host==='weixin.qq.com'||host.endsWith('.weixin.qq.com')||host==='wechat.com'||host.endsWith('.wechat.com'))return 'WeChat';
+    if(host==='vimeo.com'||host.endsWith('.vimeo.com'))return 'Vimeo';
+    if(host==='twitch.tv'||host.endsWith('.twitch.tv'))return 'Twitch';
+    if(host==='bilibili.com'||host.endsWith('.bilibili.com'))return 'Bilibili';
+    return host.replace(/^www\./,'')||'Ссылка';
+  }catch{return 'Ссылка';}
+}
 // Safe, offline Markdown renderer for exercise descriptions.
 // It supports headings, bold/italic, inline code, links, blockquotes and nested lists.
 function appendInlineMarkdown(parent,text){
-  const pattern=/(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
+  const pattern=/(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>()]+)/g;
   const source=String(text??'');let cursor=0,match;
   while((match=pattern.exec(source))){
     if(match.index>cursor)parent.append(document.createTextNode(source.slice(cursor,match.index)));
@@ -382,6 +607,11 @@ function appendInlineMarkdown(parent,text){
     else{
       const link=token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
       if(link){try{const url=new URL(link[2]);if(url.protocol==='http:'||url.protocol==='https:'){node=document.createElement('a');node.textContent=link[1];node.href=url.href;node.target='_blank';node.rel='noopener noreferrer';}}catch{}}
+      else if(/^https?:\/\//i.test(token)){
+        const suffix=(token.match(/[.,;!?]+$/)||[''])[0];
+        const cleanUrl=suffix?token.slice(0,-suffix.length):token;
+        try{const url=new URL(cleanUrl);node=document.createElement('a');node.className='video-link';node.textContent=`(${getVideoPlatformName(cleanUrl)})`;node.href=url.href;node.target='_blank';node.rel='noopener noreferrer';if(suffix)node.append(document.createTextNode(suffix));}catch{}
+      }
       if(!node)node=document.createTextNode(token);
     }
     parent.append(node);cursor=pattern.lastIndex;
@@ -472,7 +702,39 @@ $('closeImageViewer').onclick=()=>$('imageViewer').close();
 $('imageViewer').addEventListener('click',ev=>{if(ev.target===$('imageViewer'))$('imageViewer').close();});
 $('imageViewer').addEventListener('keydown',ev=>{if(ev.key==='ArrowLeft'){ev.preventDefault();moveImageViewer(-1);}else if(ev.key==='ArrowRight'){ev.preventDefault();moveImageViewer(1);}});
 
-function showDetail(idOrExercise,options={}){const e=(idOrExercise&&typeof idOrExercise==='object')?idOrExercise:exercises.find(x=>String(x.id)===String(idOrExercise));if(!e)return;selectedDetail=e;const readOnly=!!options.readOnly;$('detailTitle').textContent=e.name;$('detailMeta').textContent=`${e.topic||'Без темы'} · ${e.level||'—'} · ${e.duration||'—'} мин · ${e.format||''}`;const box=$('detailContent');box.innerHTML='';if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;bindImageZoom(img,e.images,0);box.append(img);}if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach((im,i)=>{const img=document.createElement('img');img.src=im.data;bindImageZoom(img,e.images,i+1);gallery.append(img);});box.append(gallery);}const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');if(title==='Описание')p.append(renderMarkdown(content));else p.textContent=content;s.append(h,p);box.append(s);};section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Область применения (зона корта / часть тела)',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);if(e.videos?.length){const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent='Видео и ссылки';s.append(h);e.videos.forEach(v=>{const item=document.createElement('div');item.className='video-item';const info=document.createElement('div');info.className='video-info';let isWeChat=false;try{const host=new URL(v.url).hostname.toLowerCase();isWeChat=host==='weixin.qq.com'||host.endsWith('.weixin.qq.com');}catch{}const title=document.createElement('div');title.className='video-title';title.textContent=(v.title||'Видео')+(v.note?' — '+v.note:'');info.append(title);if(isWeChat){const urlText=document.createElement('div');urlText.className='video-url';urlText.textContent=v.url;info.append(urlText);const badge=document.createElement('span');badge.className='platform-chip';badge.textContent='WeChat';info.append(badge);}else{const a=document.createElement('a');a.className='video-link';a.textContent=v.url;a.href=v.url;a.target='_blank';a.rel='noopener noreferrer';info.append(a);}const copy=document.createElement('button');copy.type='button';copy.className='button ghost small copy-link-btn';copy.textContent=isWeChat?'Копировать ссылку':'Копировать';copy.onclick=()=>copyLink(v.url);item.append(info,copy);s.append(item);});box.append(s);}if(!readOnly){const pd=document.createElement('div');pd.className='detail-section';const h=document.createElement('h3');h.textContent='Моя оценка сложности';const sel=document.createElement('select');sel.innerHTML='<option value="">Не оценено</option><option>Легко</option><option>Средне</option><option>Трудно</option>';sel.value=e.personalDifficulty||'';sel.onchange=async()=>{e.personalDifficulty=sel.value;await persist();toast('Оценка сохранена');};pd.append(h,sel);box.append(pd);const notes=document.createElement('div');notes.className='detail-section';const nh=document.createElement('h3');nh.textContent='Заметка после тренировки';const ta=document.createElement('textarea');ta.rows=2;ta.placeholder='Что получилось, что стоит исправить…';const nb=document.createElement('button');nb.className='button ghost';nb.textContent='Сохранить заметку';nb.onclick=async()=>{e.trainingNotes=e.trainingNotes||[];e.trainingNotes.unshift({date:new Date().toISOString(),text:ta.value});await persist();ta.value='';toast('Заметка сохранена');};notes.append(nh,ta,nb);(e.trainingNotes||[]).slice(0,5).forEach(n=>{const p=document.createElement('p');p.className='muted';p.textContent=`${new Date(n.date).toLocaleDateString('ru-RU')}: ${n.text}`;notes.append(p);});box.append(notes);}$('detailAddBtn').classList.toggle('hidden',readOnly);$('detailEditBtn').classList.toggle('hidden',readOnly);$('detailDialog').showModal();}
+function showDetail(idOrExercise,options={}){
+  const e=(idOrExercise&&typeof idOrExercise==='object')?idOrExercise:exercises.find(x=>String(x.id)===String(idOrExercise));
+  if(!e)return;
+  selectedDetail=e;
+  const readOnly=!!options.readOnly;
+  $('detailTitle').textContent=e.name;
+  $('detailMeta').textContent=`${e.topic||'Без темы'} · ${e.level||'—'} · ${e.duration||'—'} мин · ${e.format||''}`;
+  const box=$('detailContent');box.innerHTML='';
+  if(e.images?.[0]){const img=document.createElement('img');img.className='detail-hero';img.src=e.images[0].data;bindImageZoom(img,e.images,0);box.append(img);}
+  if(e.images?.length>1){const gallery=document.createElement('div');gallery.className='gallery';e.images.slice(1).forEach((im,i)=>{const img=document.createElement('img');img.src=im.data;bindImageZoom(img,e.images,i+1);gallery.append(img);});box.append(gallery);}
+  const section=(title,content)=>{if(!content)return;const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent=title;const p=document.createElement('div');if(title==='Описание')p.append(renderMarkdown(content));else p.textContent=content;s.append(h,p);box.append(s);};
+  section('Описание',e.description);section('Виды ударов',(e.shots||[]).join(', '));section('Дополнительные теги',(e.tags||[]).join(', '));section('Область применения (зона корта / часть тела)',(e.zones||[]).join(', '));section('Инвентарь',e.equipment);section('Постоянные заметки',e.notes);
+  if(e.videos?.length){
+    const s=document.createElement('div');s.className='detail-section';const h=document.createElement('h3');h.textContent='Видео и ссылки';s.append(h);
+    e.videos.forEach(v=>{
+      if(!v.url)return;
+      const item=document.createElement('div');item.className='video-item';
+      const info=document.createElement('div');info.className='video-info';
+      const platform=getVideoPlatformName(v.url);const isWeChat=platform==='WeChat';
+      const title=document.createElement('div');title.className='video-title';title.textContent=(v.title||'Видео')+(v.note?' — '+v.note:'');info.append(title);
+      if(isWeChat){const badge=document.createElement('span');badge.className='platform-chip';badge.textContent='(WeChat)';info.append(badge);}
+      else{const a=document.createElement('a');a.className='video-link';a.textContent=`(${platform})`;a.href=v.url;a.target='_blank';a.rel='noopener noreferrer';info.append(a);}
+      const copy=document.createElement('button');copy.type='button';copy.className='button ghost small copy-link-btn';copy.textContent='Копировать ссылку';copy.onclick=()=>copyLink(v.url);
+      item.append(info,copy);s.append(item);
+    });
+    box.append(s);
+  }
+  if(!readOnly){
+    const pd=document.createElement('div');pd.className='detail-section';const h=document.createElement('h3');h.textContent='Моя оценка сложности';const sel=document.createElement('select');sel.innerHTML='<option value="">Не оценено</option><option>Легко</option><option>Средне</option><option>Трудно</option>';sel.value=e.personalDifficulty||'';sel.onchange=async()=>{e.personalDifficulty=sel.value;await persist();toast('Оценка сохранена');};pd.append(h,sel);box.append(pd);
+    const notes=document.createElement('div');notes.className='detail-section';const nh=document.createElement('h3');nh.textContent='Заметка после тренировки';const ta=document.createElement('textarea');ta.rows=2;ta.placeholder='Что получилось, что стоит исправить…';const nb=document.createElement('button');nb.className='button ghost';nb.textContent='Сохранить заметку';nb.onclick=async()=>{e.trainingNotes=e.trainingNotes||[];e.trainingNotes.unshift({date:new Date().toISOString(),text:ta.value});await persist();ta.value='';toast('Заметка сохранена');};notes.append(nh,ta,nb);(e.trainingNotes||[]).slice(0,5).forEach(n=>{const p=document.createElement('p');p.className='muted';p.textContent=`${new Date(n.date).toLocaleDateString('ru-RU')}: ${n.text}`;notes.append(p);});box.append(notes);
+  }
+  $('detailAddBtn').classList.toggle('hidden',readOnly);$('detailEditBtn').classList.toggle('hidden',readOnly);$('detailDialog').showModal();
+}
 $('closeDetail').onclick=()=>$('detailDialog').close();$('detailAddBtn').onclick=()=>{if(selectedDetail)addToPlan(selectedDetail);$('detailDialog').close();};$('detailEditBtn').onclick=()=>{if(selectedDetail){const live=exercises.find(x=>String(x.id)===String(selectedDetail.id));if(live){$('detailDialog').close();editExercise(live.id);}}};
 $('exerciseGrid').addEventListener('click',ev=>{});
 // Canonical bilingual badminton shot labels. Unknown labels are retained verbatim.
@@ -546,8 +808,8 @@ async function importMarkdownCards(file){
   fillTopics();await persist();toast(`Импортировано карточек: ${unique.length}`);
 }
 $('markdownImportInput').onchange=async ev=>{const file=ev.target.files?.[0];if(!file)return;try{await importMarkdownCards(file);}catch(err){alert('Не удалось импортировать Markdown: '+err.message);}finally{ev.target.value='';}};
-$('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'badminton-training-backup',version:2,exportedAt:new Date().toISOString(),exercises,plans,topics},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`badminton-training-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);toast('Резервная копия подготовлена');};
-$('importInput').onchange=async ev=>{const file=ev.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(data.format!=='badminton-training-backup'||!Array.isArray(data.exercises)||!Array.isArray(data.plans))throw new Error('Неподходящий формат файла');if(!confirm(`Импортировать ${data.exercises.length} упражнений и ${data.plans.length} планов? Текущая библиотека будет заменена.`))return;exercises=data.exercises;plans=data.plans;topics=Array.isArray(data.topics)?data.topics.map(t=>String(t).trim()).filter(Boolean):collectLegacyTopics(exercises);fillTopics();await persist();toast('Данные импортированы');}catch(err){alert('Не удалось импортировать файл: '+err.message);}finally{ev.target.value='';}};
+$('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'badminton-training-backup',version:3,exportedAt:new Date().toISOString(),exercises,plans,topics,workoutHistory},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`badminton-training-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);toast('Резервная копия подготовлена');};
+$('importInput').onchange=async ev=>{const file=ev.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(data.format!=='badminton-training-backup'||!Array.isArray(data.exercises)||!Array.isArray(data.plans))throw new Error('Неподходящий формат файла');if(!confirm(`Импортировать ${data.exercises.length} упражнений и ${data.plans.length} планов? Текущая библиотека будет заменена.`))return;exercises=data.exercises;plans=data.plans;topics=Array.isArray(data.topics)?data.topics.map(t=>String(t).trim()).filter(Boolean):collectLegacyTopics(exercises);if(Array.isArray(data.workoutHistory))workoutHistory=data.workoutHistory;fillTopics();await persist();toast('Данные импортированы');}catch(err){alert('Не удалось импортировать файл: '+err.message);}finally{ev.target.value='';}};
 // ---------------- Google Drive synchronisation ----------------
 // Apps Script is called as a normal web endpoint (no iframe / HtmlService).
 // Reads use Google's documented JSONP pattern. Writes use a simple text/plain
@@ -669,10 +931,10 @@ function scheduleAutoSync(){
     if($('syncStatus')) $('syncStatus').textContent='Автосинхронизация не выполнена: '+err.message;
   }),1800);
 }
-function localHasData(){return exercises.length>0 || plans.length>0 || JSON.stringify(topics)!==JSON.stringify(DEFAULT_TOPICS);}
+function localHasData(){return exercises.length>0 || plans.length>0 || workoutHistory.length>0 || JSON.stringify(topics)!==JSON.stringify(DEFAULT_TOPICS);}
 function validateCloudRecord(record){
   if(!record || !Number.isFinite(Number(record.revision))) throw new Error('Google Drive вернул некорректную запись.');
-  if(record.data!==null && record.data!==undefined && (!Array.isArray(record.data.exercises) || !Array.isArray(record.data.plans) || (record.data.topics!==undefined && !Array.isArray(record.data.topics)))) throw new Error('Формат данных в Google Drive не распознан. Локальная библиотека не изменена.');
+  if(record.data!==null && record.data!==undefined && (!Array.isArray(record.data.exercises) || !Array.isArray(record.data.plans) || (record.data.topics!==undefined && !Array.isArray(record.data.topics)) || (record.data.workoutHistory!==undefined && !Array.isArray(record.data.workoutHistory)))) throw new Error('Формат данных в Google Drive не распознан. Локальная библиотека не изменена.');
   return record;
 }
 async function applyCloudRecord(record){
@@ -683,21 +945,27 @@ async function applyCloudRecord(record){
     exercises=structuredClone(record.data.exercises);
     plans=structuredClone(record.data.plans);
     topics=Array.isArray(record.data.topics)?structuredClone(record.data.topics):collectLegacyTopics(exercises);
+    // Old cloud records don't have workoutHistory. Keep the local journal in that case.
+    if(Array.isArray(record.data.workoutHistory))workoutHistory=structuredClone(record.data.workoutHistory);
     let repaired=cleanMarkdownFieldArtifacts(exercises);
     for(const plan of plans){
       if(Array.isArray(plan.items))repaired=cleanMarkdownFieldArtifacts(plan.items)||repaired;
     }
+    for(const entry of workoutHistory){
+      if(Array.isArray(entry.items))repaired=cleanMarkdownFieldArtifacts(entry.items.map(item=>item.exerciseSnapshot).filter(Boolean))||repaired;
+    }
     await putRecord('exercises',exercises);
     await putRecord('plans',plans);
     await putRecord('topics',topics);
-    syncMeta={revision:Number(record.revision),dirty:repaired,lastSyncedAt:record.updatedAt||new Date().toISOString()};
+    await putRecord('workoutHistory',workoutHistory);
+    syncMeta={revision:Number(record.revision),dirty:repaired || !Array.isArray(record.data.workoutHistory),lastSyncedAt:record.updatedAt||new Date().toISOString()};
     await putRecord('syncMeta',syncMeta);
     renderAll();
   }finally{applyingCloudData=false;}
   if(syncMeta.dirty)scheduleAutoSync();
 }
 async function uploadLocalRecord(baseRevision){
-  const data={exercises,plans,topics};
+  const data={exercises,plans,topics,workoutHistory};
   const json=JSON.stringify(data);
   if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
   const result=await callSyncBridge('write',{baseRevision:Number(baseRevision),data});

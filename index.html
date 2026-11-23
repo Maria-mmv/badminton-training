@@ -21,6 +21,7 @@
     <button class="tab active" data-tab="library">Библиотека</button>
     <button class="tab" data-tab="builder">Тренировка <span id="planCount" class="count">0</span></button>
     <button class="tab" data-tab="plans">Мои планы</button>
+    <button class="tab" data-tab="history">Журнал <span id="workoutHistoryCount" class="count">0</span></button>
     <button class="tab" data-tab="data">Данные</button>
   </nav>
 
@@ -70,6 +71,16 @@
       <div class="section-head"><div><h2>Мои планы</h2><p class="muted">Сохранённые тренировки можно открыть и изменить.</p></div></div>
       <div id="savedPlans" class="stack"></div>
       <div id="emptyPlans" class="empty">Сохранённых тренировок пока нет.</div>
+    </section>
+
+    <section id="history" class="panel">
+      <div class="section-head"><div><h2>Журнал тренировок</h2><p class="muted">Записывай фактическое выполнение планов, отслеживай объём и возвращайся к прошлым тренировкам.</p></div></div>
+      <div id="workoutHistorySummary" class="history-summary-grid"></div>
+      <h3 class="history-section-title">История</h3>
+      <div id="workoutHistoryList" class="stack"></div>
+      <div id="emptyWorkoutHistory" class="empty">Пока нет записанных тренировок. Открой «Мои планы» и нажми «Записать выполнение» у нужного плана.</div>
+      <h3 class="history-section-title">Прогресс по упражнениям</h3>
+      <div id="exerciseProgressList" class="stack"></div>
     </section>
 
     <section id="data" class="panel">
@@ -123,7 +134,7 @@
         <label class="field">Время по умолчанию, мин<input id="exDuration" type="number" min="1" value="8"></label>
         <label class="field">Формат<select id="exFormat"><option>Индивидуально</option><option>С партнёром</option><option>С тренером</option><option>Многоволановое</option><option>Игровое упражнение</option></select></label>
       </div>
-      <label class="field">Виды ударов <span class="hint">(через запятую; русское и английское названия)</span><input id="exShots" placeholder="Укороченный (Drop shot), Смеш (Smash), Плоский удар (Drive)"></label>
+      <label class="field">Виды ударов <span class="hint">(через запятую; русское и английское названия)</span><input id="exShots" placeholder="Укороченный удар, Drop shot, Смеш, Smash, Плоский удар, Drive"></label>
       <label class="field">Дополнительные теги <span class="hint">(через запятую)</span><input id="exTags" placeholder="Скорость, точность, координация"></label>
       <label class="field">Область применения <span class="hint">(зона корта или часть тела; через запятую)</span><input id="exZones" placeholder="Задняя линия, сетка, ноги, плечи"></label>
       <label class="field">Инвентарь<input id="exEquipment" placeholder="Ракетка, воланы…"></label>
@@ -147,6 +158,20 @@
     <div class="dialog-head"><div><h2 id="detailTitle"></h2><p id="detailMeta" class="muted"></p></div><button class="icon-button" id="closeDetail">✕</button></div>
     <div id="detailContent"></div>
     <div class="actions"><button id="detailAddBtn" class="button primary">＋ В тренировку</button><button id="detailEditBtn" class="button ghost">Редактировать</button></div>
+  </dialog>
+
+  <dialog id="workoutLogDialog" class="workout-log-dialog">
+    <form id="workoutLogForm" method="dialog">
+      <div class="dialog-head"><div><h2>Запись о тренировке</h2><p id="workoutLogPlanName" class="muted"></p></div><button type="button" class="icon-button" id="closeWorkoutLogDialog" aria-label="Закрыть">✕</button></div>
+      <label class="field">Когда тренировалась<input id="workoutLogDate" type="datetime-local" required></label>
+      <div class="two-col">
+        <label class="field">Где<input id="workoutLogLocation" placeholder="Зал, клуб, площадка…"></label>
+        <label class="field">С кем<input id="workoutLogPartners" placeholder="Партнёр, группа, тренер…"></label>
+      </div>
+      <label class="field">Общий комментарий<textarea id="workoutLogNote" rows="2" placeholder="Как прошла тренировка, самочувствие, общие впечатления…"></textarea></label>
+      <div class="media-block"><h3>Результаты по упражнениям</h3><p class="hint">Отметь выполненные упражнения. Можно указать количество повторений, фактическое время и короткий комментарий. Пустые поля останутся незаполненными.</p><div id="workoutLogExerciseRows" class="stack small-stack"></div></div>
+      <div class="actions"><button type="submit" class="button primary">Сохранить запись</button><button type="button" class="button ghost" id="cancelWorkoutLogBtn">Отмена</button></div>
+    </form>
   </dialog>
 
   <dialog id="imageViewer" class="image-viewer" aria-label="Просмотр изображения">
