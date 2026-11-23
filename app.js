@@ -365,6 +365,11 @@ function renderPlans(){
     const edit=document.createElement('button');edit.className='button ghost';edit.type='button';edit.textContent='Открыть копию';
     edit.onclick=()=>{$('trainingName').value=p.name+' — копия';currentPlan=structuredClone(items).map(x=>({...x,itemId:uid()}));renderPlan();switchTab('builder');};
     
+const del=document.createElement('button');del.className='button danger';del.type='button';del.textContent='Удалить';
+    del.onclick=async()=>{if(confirm('Удалить этот план? Записи о ранее выполненных тренировках сохранятся.')){plans=plans.filter(x=>x.id!==p.id);await persist();}};
+    actions.append(log,edit,del);card.append(h,d,itemList,actions);$('savedPlans').append(card);
+  });
+}
 function localDateTimeInputValue(date=new Date()){
   const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
   return local.toISOString().slice(0,16);
@@ -541,11 +546,7 @@ function renderWorkoutHistory(){
     values.textContent=pieces.join(' · ');row.append(name,values);progress.append(row);
   });
 }
-const del=document.createElement('button');del.className='button danger';del.type='button';del.textContent='Удалить';
-    del.onclick=async()=>{if(confirm('Удалить этот план? Записи о ранее выполненных тренировках сохранятся.')){plans=plans.filter(x=>x.id!==p.id);await persist();}};
-    actions.append(log,edit,del);card.append(h,d,itemList,actions);$('savedPlans').append(card);
-  });
-}
+
 function resetForm(){ $('exerciseForm').reset();$('exerciseId').value='';$('exTopic').value=topics[0]||'';$('exDuration').value=8;pendingImages=[];existingImageUrls=[];$('imagePreview').innerHTML='';$('existingImages').innerHTML='';$('videoFields').innerHTML='';$('deleteExerciseBtn').classList.add('hidden');$('dialogTitle').textContent='Новое упражнение';}
 function videoRow(v={title:'',url:'',note:''}){const row=document.createElement('div');row.className='video-row';['title','url','note'].forEach((k,i)=>{const input=document.createElement('input');input.placeholder=['Название видео','https://…','Комментарий'][i];input.value=v[k]||'';input.dataset.key=k;row.append(input);});const rm=document.createElement('button');rm.type='button';rm.className='mini-btn';rm.textContent='×';rm.onclick=()=>row.remove();row.append(rm);$('videoFields').append(row);}
 $('addVideoBtn').onclick=()=>videoRow();
