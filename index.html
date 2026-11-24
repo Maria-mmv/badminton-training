@@ -74,8 +74,14 @@
     </section>
 
     <section id="history" class="panel">
-      <div class="section-head"><div><h2>Журнал тренировок</h2><p class="muted">Записывай фактическое выполнение планов, отслеживай объём и возвращайся к прошлым тренировкам.</p></div></div>
+      <div class="section-head"><div><h2>Журнал тренировок</h2><p class="muted">Записывай фактическое выполнение планов или самостоятельные занятия.</p></div><button type="button" id="newWorkoutLogBtn" class="button primary">＋ Записать тренировку</button></div>
       <div id="workoutHistorySummary" class="history-summary-grid"></div>
+      <div class="history-filters" aria-label="Фильтр журнала">
+        <button type="button" class="button ghost active" data-history-category="all">Все</button>
+        <button type="button" class="button ghost" data-history-category="Бадминтон">Бадминтон</button>
+        <button type="button" class="button ghost" data-history-category="Растяжка">Растяжка</button>
+        <button type="button" class="button ghost" data-history-category="Физическая подготовка">Физическая подготовка</button>
+      </div>
       <h3 class="history-section-title">История</h3>
       <div id="workoutHistoryList" class="stack"></div>
       <div id="emptyWorkoutHistory" class="empty">Пока нет записанных тренировок. Открой «Мои планы» и нажми «Записать выполнение» у нужного плана.</div>
@@ -162,15 +168,19 @@
 
   <dialog id="workoutLogDialog" class="workout-log-dialog">
     <form id="workoutLogForm" method="dialog">
-      <div class="dialog-head"><div><h2>Запись о тренировке</h2><p id="workoutLogPlanName" class="muted"></p></div><button type="button" class="icon-button" id="closeWorkoutLogDialog" aria-label="Закрыть">✕</button></div>
+      <div class="dialog-head"><div><h2 id="workoutLogFormTitle">Запись о тренировке</h2><p id="workoutLogPlanName" class="muted"></p></div><button type="button" class="icon-button" id="closeWorkoutLogDialog" aria-label="Закрыть">✕</button></div>
+      <label class="field">Категория тренировки<select id="workoutLogCategory"><option>Бадминтон</option><option>Растяжка</option><option>Физическая подготовка</option></select></label>
       <label class="field">Когда тренировалась<input id="workoutLogDate" type="datetime-local" required></label>
       <div class="two-col">
         <label class="field">Где<input id="workoutLogLocation" placeholder="Зал, клуб, площадка…"></label>
         <label class="field">С кем<input id="workoutLogPartners" placeholder="Партнёр, группа, тренер…"></label>
       </div>
       <label class="field">Общий комментарий<textarea id="workoutLogNote" rows="2" placeholder="Как прошла тренировка, самочувствие, общие впечатления…"></textarea></label>
-      <div class="media-block"><h3>Результаты по упражнениям</h3><p class="hint">Отметь выполненные упражнения. Можно указать количество повторений, фактическое время и короткий комментарий. Пустые поля останутся незаполненными.</p><div id="workoutLogExerciseRows" class="stack small-stack"></div></div>
-      <div class="actions"><button type="submit" class="button primary">Сохранить запись</button><button type="button" class="button ghost" id="cancelWorkoutLogBtn">Отмена</button></div>
+      <div class="media-block"><h3>Результаты по упражнениям</h3><p class="hint">Отметь выполненные упражнения. Можно указать количество повторений, фактическое время и короткий комментарий.</p>
+        <div class="workout-add-exercise"><select id="workoutAddExerciseSelect" aria-label="Выбрать упражнение из библиотеки"></select><button type="button" id="workoutAddExerciseBtn" class="button ghost">＋ Из библиотеки</button></div>
+        <div class="workout-add-exercise"><input id="workoutCustomExerciseName" placeholder="Название нового упражнения"><button type="button" id="workoutAddCustomExerciseBtn" class="button ghost">＋ Добавить вручную</button></div>
+        <div id="workoutLogExerciseRows" class="stack small-stack"></div></div>
+      <div class="actions"><button type="submit" id="saveWorkoutLogBtn" class="button primary">Сохранить запись</button><button type="button" class="button ghost" id="cancelWorkoutLogBtn">Отмена</button></div>
     </form>
   </dialog>
 

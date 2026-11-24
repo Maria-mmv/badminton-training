@@ -2,7 +2,7 @@ const DB_NAME='badminton-training-db', DB_VERSION=1, STORE='records';
 const SYNC_EXEC_URL='https://script.google.com/macros/s/AKfycbwi4GIckQ2ZmeMlUu54b9ZmqYOUln-ADMRs7hTs54ILgCNGOg73iiB7DAOFL4w4PPVabQ/exec';
 const SYNC_CHANNEL='badminton-training-sync';
 const DEFAULT_TOPICS=['Техника','Перемещения','Игра у сетки','Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
-let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], workoutHistory=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[], activeWorkoutLogPlan=null;
+let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], workoutHistory=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[], activeWorkoutLogPlan=null, editingWorkoutRecordId=null, activeHistoryCategory='all';
 let selectionMode=false, lightboxImages=[], lightboxIndex=0;
 const selectedExerciseIds=new Set();
 let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncBridgeReady=false, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
@@ -17,6 +17,8 @@ async function loadAll(){
   exercises=await getRecord('exercises')||[];
   plans=await getRecord('plans')||[];
   workoutHistory=await getRecord('workoutHistory')||[];
+  let historyCategoriesMigrated=false;
+  workoutHistory.forEach(record=>{if(!record.category){record.category=inferWorkoutCategory(record);historyCategoriesMigrated=true;}});
   const savedTopics=await getRecord('topics');
   topics=Array.isArray(savedTopics)?savedTopics:collectLegacyTopics(exercises);
   syncMeta=await getRecord('syncMeta')||{revision:0,dirty:false,lastSyncedAt:null};
@@ -29,7 +31,7 @@ async function loadAll(){
   for(const entry of workoutHistory){
     if(Array.isArray(entry.items)) repaired=cleanMarkdownFieldArtifacts(entry.items.map(item=>item.exerciseSnapshot).filter(Boolean))||repaired;
   }
-  if(repaired){
+  if(repaired || historyCategoriesMigrated){
     await putRecord('exercises',exercises);
     await putRecord('plans',plans);
     await putRecord('workoutHistory',workoutHistory);
@@ -383,72 +385,110 @@ function compactExerciseSnapshot(item){
   delete snapshot.personalDifficulty;
   return snapshot;
 }
-function openWorkoutLogDialog(plan){
-  activeWorkoutLogPlan=plan;
-  $('workoutLogPlanName').textContent=plan.name||'Тренировка';
-  $('workoutLogDate').value=localDateTimeInputValue();
-  $('workoutLogLocation').value='';
-  $('workoutLogPartners').value='';
-  $('workoutLogNote').value='';
+const WORKOUT_CATEGORIES=['Бадминтон','Растяжка','Физическая подготовка'];
+function inferWorkoutCategory(record){
+  const values=[record?.planName,...(record?.items||[]).flatMap(item=>[item.topic,item.exerciseSnapshot?.topic,item.name])].filter(Boolean).join(' ').toLocaleLowerCase('ru');
+  if(/растяж|stretch|мобил|гибкост/.test(values))return 'Растяжка';
+  if(/физическ|силов|кардио|тренажер|мышц|корпус|ноги|пресс/.test(values))return 'Физическая подготовка';
+  return 'Бадминтон';
+}
+function workoutSourceForItem(item){
+  const current=exercises.find(e=>String(e.id)===String(item?.id??item?.exerciseId));
+  return current||item?.exerciseSnapshot||item||{};
+}
+function addWorkoutLogRow(source, values={}){
+  const box=$('workoutLogExerciseRows');
+  const row=document.createElement('div');row.className='workout-log-exercise';
+  const snapshot=compactExerciseSnapshot(source||{});
+  row.dataset.item=JSON.stringify(snapshot);
+  const head=document.createElement('div');head.className='workout-log-exercise-head';
+  const name=document.createElement('strong');name.textContent=source?.name||'Новое упражнение';
+  const planned=document.createElement('span');planned.className='muted';planned.textContent=Number(source?.duration)>0?`План: ${Number(source.duration)} мин`:'Добавлено вручную';
+  head.append(name,planned);
+  const completeLabel=document.createElement('label');completeLabel.className='workout-log-complete';
+  const complete=document.createElement('input');complete.type='checkbox';complete.checked=values.completed!==false;complete.dataset.logField='completed';
+  completeLabel.append(complete,document.createTextNode('Выполнено'));
+  const fields=document.createElement('div');fields.className='workout-log-fields';
+  const repsLabel=document.createElement('label');repsLabel.className='field';repsLabel.textContent='Повторений / раз';
+  const reps=document.createElement('input');reps.type='number';reps.min='0';reps.step='1';reps.placeholder='Например, 20';reps.dataset.logField='repetitions';reps.value=values.repetitions??'';repsLabel.append(reps);
+  const minutesLabel=document.createElement('label');minutesLabel.className='field';minutesLabel.textContent='Фактически, мин';
+  const minutes=document.createElement('input');minutes.type='number';minutes.min='0';minutes.step='0.5';minutes.placeholder='Например, 10';minutes.dataset.logField='actualMinutes';minutes.value=values.actualMinutes??'';minutesLabel.append(minutes);
+  fields.append(repsLabel,minutesLabel);
+  const comment=document.createElement('textarea');comment.rows=2;comment.placeholder='Короткий комментарий: самочувствие, качество, что улучшить…';comment.dataset.logField='comment';comment.value=values.comment||'';
+  const remove=document.createElement('button');remove.type='button';remove.className='button danger small';remove.textContent='Убрать упражнение';remove.onclick=()=>row.remove();
+  row.append(head,completeLabel,fields,comment,remove);box.append(row);
+}
+function populateWorkoutExercisePicker(){
+  const select=$('workoutAddExerciseSelect');select.innerHTML='';
+  select.add(new Option('Выбрать упражнение из библиотеки…',''));
+  exercises.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'ru')).forEach(item=>select.add(new Option(`${item.name}${item.topic?' · '+item.topic:''}`,String(item.id))));
+}
+function openWorkoutLogDialog(plan, record=null){
+  editingWorkoutRecordId=record?.id??null;
+  activeWorkoutLogPlan=plan||{id:null,name:'Самостоятельная тренировка',items:[]};
+  $('workoutLogPlanName').textContent=record?'Редактирование записи':(plan?.name||'Самостоятельная тренировка');
+  $('workoutLogDate').value=localDateTimeInputValue(record?.date?new Date(record.date):new Date());
+  $('workoutLogLocation').value=record?.location||'';
+  $('workoutLogPartners').value=record?.partners||'';
+  $('workoutLogNote').value=record?.note||'';
+  $('workoutLogCategory').value=record?.category||inferWorkoutCategory(plan||record);
   const box=$('workoutLogExerciseRows');box.innerHTML='';
-  (plan.items||[]).forEach((item,index)=>{
-    const row=document.createElement('div');row.className='workout-log-exercise';row.dataset.index=String(index);
-    const head=document.createElement('div');head.className='workout-log-exercise-head';
-    const name=document.createElement('strong');name.textContent=`${index+1}. ${item.name||'Упражнение'}`;
-    const planned=document.createElement('span');planned.className='muted';planned.textContent=`План: ${Number(item.duration||0)} мин`;
-    head.append(name,planned);
-    const completeLabel=document.createElement('label');completeLabel.className='workout-log-complete';
-    const complete=document.createElement('input');complete.type='checkbox';complete.checked=true;complete.dataset.logField='completed';
-    completeLabel.append(complete,document.createTextNode('Выполнено'));
-    const fields=document.createElement('div');fields.className='workout-log-fields';
-    const repsLabel=document.createElement('label');repsLabel.className='field';repsLabel.textContent='Повторений / раз';
-    const reps=document.createElement('input');reps.type='number';reps.min='0';reps.step='1';reps.placeholder='Например, 20';reps.dataset.logField='repetitions';repsLabel.append(reps);
-    const minutesLabel=document.createElement('label');minutesLabel.className='field';minutesLabel.textContent='Фактически, мин';
-    const minutes=document.createElement('input');minutes.type='number';minutes.min='0';minutes.step='0.5';minutes.placeholder='Например, 10';minutes.dataset.logField='actualMinutes';minutesLabel.append(minutes);
-    fields.append(repsLabel,minutesLabel);
-    const comment=document.createElement('textarea');comment.rows=2;comment.placeholder='Короткий комментарий: самочувствие, качество, что улучшить…';comment.dataset.logField='comment';
-    row.append(head,completeLabel,fields,comment);box.append(row);
+  const initialItems=record?.items||plan?.items||[];
+  initialItems.forEach(item=>{
+    const source=record?workoutSourceForItem(item):item;
+    addWorkoutLogRow(source,record?item:{completed:true});
   });
+  populateWorkoutExercisePicker();
+  $('workoutLogFormTitle').textContent=record?'Редактировать тренировку':'Запись о тренировке';
+  $('saveWorkoutLogBtn').textContent=record?'Сохранить изменения':'Сохранить запись';
   $('workoutLogDialog').showModal();
 }
-$('closeWorkoutLogDialog').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;};
-$('cancelWorkoutLogBtn').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;};
+$('workoutAddExerciseBtn').onclick=()=>{
+  const id=$('workoutAddExerciseSelect').value;
+  const source=exercises.find(e=>String(e.id)===id);
+  if(!source){toast('Сначала выбери упражнение из списка');return;}
+  addWorkoutLogRow(source,{completed:true});$('workoutAddExerciseSelect').value='';
+};
+$('workoutAddCustomExerciseBtn').onclick=()=>{
+  const name=$('workoutCustomExerciseName').value.trim();
+  if(!name){toast('Введи название упражнения');return;}
+  addWorkoutLogRow({id:null,name,topic:'',duration:0,description:'',images:[],videos:[]},{completed:true});
+  $('workoutCustomExerciseName').value='';
+};
+$('closeWorkoutLogDialog').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;editingWorkoutRecordId=null;};
+$('cancelWorkoutLogBtn').onclick=()=>{$('workoutLogDialog').close();activeWorkoutLogPlan=null;editingWorkoutRecordId=null;};
 $('workoutLogForm').addEventListener('submit',async ev=>{
   ev.preventDefault();
   if(!activeWorkoutLogPlan)return;
   const dateValue=$('workoutLogDate').value;
   const date=new Date(dateValue);
   if(!dateValue||Number.isNaN(date.getTime())){alert('Укажи корректные дату и время тренировки.');return;}
-  const sourceItems=activeWorkoutLogPlan.items||[];
   const rows=[...$('workoutLogExerciseRows').children];
-  const items=rows.map((row,index)=>{
+  const items=rows.map(row=>{
     const get=field=>row.querySelector(`[data-log-field="${field}"]`);
-    const repsRaw=get('repetitions').value.trim();
-    const minutesRaw=get('actualMinutes').value.trim();
-    const source=sourceItems[index]||{};
+    const source=JSON.parse(row.dataset.item||'{}');
+    const repsRaw=get('repetitions').value.trim(),minutesRaw=get('actualMinutes').value.trim();
     return {
-      exerciseId:source.id??null,
-      name:source.name||'Упражнение',
-      topic:source.topic||'',
-      completed:get('completed').checked,
-      plannedMinutes:Number(source.duration)||0,
+      exerciseId:source.id??null,name:source.name||'Упражнение',topic:source.topic||'',
+      completed:get('completed').checked,plannedMinutes:Number(source.duration)||0,
       repetitions:repsRaw===''?null:Math.max(0,Number(repsRaw)||0),
       actualMinutes:minutesRaw===''?null:Math.max(0,Number(minutesRaw)||0),
-      comment:get('comment').value.trim(),
-      exerciseSnapshot:compactExerciseSnapshot(source)
+      comment:get('comment').value.trim(),exerciseSnapshot:compactExerciseSnapshot(source)
     };
   });
+  const existing=editingWorkoutRecordId?workoutHistory.find(x=>String(x.id)===String(editingWorkoutRecordId)):null;
   const record={
-    id:uid(),planId:activeWorkoutLogPlan.id??null,planName:activeWorkoutLogPlan.name||'Тренировка',
-    date:date.toISOString(),location:$('workoutLogLocation').value.trim(),
-    partners:$('workoutLogPartners').value.trim(),note:$('workoutLogNote').value.trim(),items
+    id:existing?.id||uid(),planId:activeWorkoutLogPlan.id??existing?.planId??null,
+    planName:existing?.planName||activeWorkoutLogPlan.name||'Самостоятельная тренировка',
+    category:$('workoutLogCategory').value,date:date.toISOString(),
+    location:$('workoutLogLocation').value.trim(),partners:$('workoutLogPartners').value.trim(),
+    note:$('workoutLogNote').value.trim(),items
   };
-  workoutHistory.unshift(record);
-  activeWorkoutLogPlan=null;
-  $('workoutLogDialog').close();
-  await persist();
-  switchTab('history');
-  toast('Выполнение тренировки записано');
+  if(existing){workoutHistory=workoutHistory.map(x=>String(x.id)===String(existing.id)?record:x);}
+  else workoutHistory.unshift(record);
+  activeWorkoutLogPlan=null;editingWorkoutRecordId=null;
+  $('workoutLogDialog').close();await persist();switchTab('history');
+  toast(existing?'Запись тренировки обновлена':'Выполнение тренировки записано');
 });
 function createPlanFromHistory(record){
   currentPlan=(record.items||[]).map(item=>{
@@ -467,14 +507,16 @@ function renderWorkoutHistory(){
   const list=$('workoutHistoryList'),empty=$('emptyWorkoutHistory'),summary=$('workoutHistorySummary'),progress=$('exerciseProgressList');
   if(!list||!empty||!summary||!progress)return;
   list.innerHTML='';progress.innerHTML='';
-  const ordered=[...workoutHistory].sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const allItems=workoutHistory.flatMap(entry=>entry.items||[]);
+  document.querySelectorAll('[data-history-category]').forEach(button=>button.classList.toggle('active',button.dataset.historyCategory===activeHistoryCategory));
+  const filtered=workoutHistory.filter(record=>activeHistoryCategory==='all'||(record.category||inferWorkoutCategory(record))===activeHistoryCategory);
+  const ordered=[...filtered].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const allItems=filtered.flatMap(entry=>entry.items||[]);
   const completed=allItems.filter(item=>item.completed!==false);
   const trackedMinutes=completed.reduce((sum,item)=>sum+(Number(item.actualMinutes)||0),0);
   const trackedReps=completed.reduce((sum,item)=>sum+(Number(item.repetitions)||0),0);
   summary.innerHTML='';
   [
-    [workoutHistory.length,'Тренировок'],
+    [filtered.length,'Тренировок'],
     [completed.length,'Выполненных упражнений'],
     [`${trackedMinutes} мин`,'Записанное время'],
     [trackedReps,'Повторений']
@@ -489,8 +531,10 @@ function renderWorkoutHistory(){
     const card=document.createElement('article');card.className='saved-plan history-card';
     const head=document.createElement('div');head.className='history-card-head';
     const title=document.createElement('strong');title.textContent=record.planName||'Тренировка';
+    const category=document.createElement('span');category.className='platform-chip';category.textContent=record.category||inferWorkoutCategory(record);
     const date=document.createElement('span');date.className='muted';date.textContent=formatLoggedDate(record.date);
-    head.append(title,date);
+    const headTitle=document.createElement('div');headTitle.className='history-title-group';headTitle.append(title,category);
+    head.append(headTitle,date);
     const items=record.items||[];
     const done=items.filter(item=>item.completed!==false).length;
     const minutes=items.filter(item=>item.completed!==false).reduce((sum,item)=>sum+(Number(item.actualMinutes)||0),0);
@@ -521,12 +565,13 @@ function renderWorkoutHistory(){
     card.append(details);
     const actions=document.createElement('div');actions.className='card-actions';
     const reuse=document.createElement('button');reuse.type='button';reuse.className='button ghost';reuse.textContent='Собрать план по этой записи';reuse.onclick=()=>createPlanFromHistory(record);
+    const edit=document.createElement('button');edit.type='button';edit.className='button primary';edit.textContent='Редактировать';edit.onclick=()=>openWorkoutLogDialog({id:record.planId,name:record.planName,items:[]},record);
     const remove=document.createElement('button');remove.type='button';remove.className='button danger';remove.textContent='Удалить запись';
     remove.onclick=async()=>{if(confirm('Удалить эту запись из журнала?')){workoutHistory=workoutHistory.filter(x=>x.id!==record.id);await persist();}};
-    actions.append(reuse,remove);card.append(actions);list.append(card);
+    actions.append(reuse,edit,remove);card.append(actions);list.append(card);
   });
   const aggregates=new Map();
-  workoutHistory.forEach(record=>{
+  filtered.forEach(record=>{
     (record.items||[]).forEach(item=>{
       if(item.completed===false)return;
       const key=String(item.exerciseId??item.name);
@@ -547,6 +592,9 @@ function renderWorkoutHistory(){
   });
 }
 
+
+document.querySelectorAll('[data-history-category]').forEach(button=>button.addEventListener('click',()=>{activeHistoryCategory=button.dataset.historyCategory;renderWorkoutHistory();}));
+$('newWorkoutLogBtn').addEventListener('click',()=>openWorkoutLogDialog({id:null,name:'Самостоятельная тренировка',items:[]}));
 function resetForm(){ $('exerciseForm').reset();$('exerciseId').value='';$('exTopic').value=topics[0]||'';$('exDuration').value=8;pendingImages=[];existingImageUrls=[];$('imagePreview').innerHTML='';$('existingImages').innerHTML='';$('videoFields').innerHTML='';$('deleteExerciseBtn').classList.add('hidden');$('dialogTitle').textContent='Новое упражнение';}
 function videoRow(v={title:'',url:'',note:''}){const row=document.createElement('div');row.className='video-row';['title','url','note'].forEach((k,i)=>{const input=document.createElement('input');input.placeholder=['Название видео','https://…','Комментарий'][i];input.value=v[k]||'';input.dataset.key=k;row.append(input);});const rm=document.createElement('button');rm.type='button';rm.className='mini-btn';rm.textContent='×';rm.onclick=()=>row.remove();row.append(rm);$('videoFields').append(row);}
 $('addVideoBtn').onclick=()=>videoRow();
@@ -871,7 +919,7 @@ async function callSyncBridge(action,payload=null){
     const writeId=`${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const body={action:'write',token:syncToken,payload:{...payload,writeId}};
     const json=JSON.stringify(body);
-    if(json.length>20*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
+    if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
 
     try{
       // text/plain is a CORS-safelisted content type, so the browser does not
@@ -968,7 +1016,7 @@ async function applyCloudRecord(record){
 async function uploadLocalRecord(baseRevision){
   const data={exercises,plans,topics,workoutHistory};
   const json=JSON.stringify(data);
-  if(json.length>20*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
+  if(json.length>7.5*1024*1024) throw new Error('Данные занимают слишком много места для текущей версии синхронизации (лимит около 7,5 МБ). Уменьшите размер или число фотографий.');
   const result=await callSyncBridge('write',{baseRevision:Number(baseRevision),data});
   if(result && result.conflict) return {conflict:true,current:validateCloudRecord(result.current)};
   if(!result || result.ok!==true) throw new Error('Google Drive не подтвердил сохранение данных.');

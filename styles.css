@@ -83,3 +83,13 @@
 .workout-log-exercise-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.workout-log-exercise-head strong{font-size:14px}.workout-log-complete{display:flex;align-items:center;gap:7px;font-size:13px;color:#35536f}.workout-log-complete input{width:auto;margin:0}
 .workout-log-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.workout-log-fields .field{margin:0}.workout-log-exercise textarea{font-size:13px}
 @media(max-width:650px){.history-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.history-exercise-line{align-items:flex-start}.workout-log-fields{grid-template-columns:1fr 1fr}.workout-log-exercise-head{flex-direction:column;gap:3px}}
+
+
+/* Workout journal categories, editing and ad-hoc exercises */
+.history-filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}
+.history-filters .button.active{background:#1e5689;color:#fff}
+.history-title-group{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.workout-add-exercise{display:flex;gap:8px;margin:10px 0;align-items:center}
+.workout-add-exercise select,.workout-add-exercise input{flex:1;min-width:0}
+.workout-log-exercise>.button{align-self:flex-start}
+@media(max-width:650px){.history-filters .button{flex:1 1 calc(50% - 8px)}.workout-add-exercise{flex-direction:column;align-items:stretch}.workout-add-exercise .button{width:100%}}
