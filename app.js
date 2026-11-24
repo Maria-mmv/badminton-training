@@ -2,7 +2,7 @@ const DB_NAME='badminton-training-db', DB_VERSION=1, STORE='records';
 const SYNC_EXEC_URL='https://script.google.com/macros/s/AKfycbwi4GIckQ2ZmeMlUu54b9ZmqYOUln-ADMRs7hTs54ILgCNGOg73iiB7DAOFL4w4PPVabQ/exec';
 const SYNC_CHANNEL='badminton-training-sync';
 const DEFAULT_TOPICS=['Техника','Перемещения','Игра у сетки','Атака и защита','Подача и приём','Тактика','Физическая подготовка'];
-let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], workoutHistory=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[], activeWorkoutLogPlan=null, editingWorkoutRecordId=null, activeHistoryCategory='all';
+let db, exercises=[], plans=[], topics=[...DEFAULT_TOPICS], workoutHistory=[], currentPlan=[], selectedDetail=null, pendingImages=[], existingImageUrls=[], activeWorkoutLogPlan=null, editingWorkoutRecordId=null, activeHistoryCategory='all', activePlanCategory='all';
 let selectionMode=false, lightboxImages=[], lightboxIndex=0;
 const selectedExerciseIds=new Set();
 let syncToken='', syncMeta={revision:0,dirty:false,lastSyncedAt:null}, syncBridgeReady=false, syncInProgress=false, syncTimer=null, applyingCloudData=false, syncErrorMessage='';
@@ -27,6 +27,10 @@ async function loadAll(){
   let repaired=cleanMarkdownFieldArtifacts(exercises);
   for(const plan of plans){
     if(Array.isArray(plan.items)) repaired=cleanMarkdownFieldArtifacts(plan.items)||repaired;
+    if(!WORKOUT_CATEGORIES.includes(plan.category)){
+      plan.category=inferWorkoutCategory({planName:plan.name,items:plan.items||[]});
+      repaired=true;
+    }
   }
   for(const entry of workoutHistory){
     if(Array.isArray(entry.items)) repaired=cleanMarkdownFieldArtifacts(entry.items.map(item=>item.exerciseSnapshot).filter(Boolean))||repaired;
@@ -345,14 +349,30 @@ $('newTopicInput').addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preve
 function addToPlan(e){currentPlan.push({...structuredClone(e),itemId:uid(),duration:Number(e.duration)||8});renderPlan();switchTab('builder');toast('Добавлено в тренировку');}
 function renderPlan(){$('planList').innerHTML='';currentPlan.forEach((e,i)=>{const row=document.createElement('div');row.className='plan-item';const head=document.createElement('div');head.className='plan-item-head';const title=document.createElement('strong');title.textContent=`${i+1}. ${e.name}`;const headActions=document.createElement('div');headActions.className='plan-row-actions';const view=document.createElement('button');view.type='button';view.className='mini-btn';view.textContent='Просмотр';view.onclick=()=>showDetail(e,{readOnly:true});const remove=document.createElement('button');remove.className='mini-btn';remove.textContent='Удалить';remove.onclick=()=>{currentPlan.splice(i,1);renderPlan();};headActions.append(view,remove);head.append(title,headActions);const meta=document.createElement('div');meta.className='muted';meta.textContent=e.topic||'Без темы';const controls=document.createElement('div');controls.className='plan-item-controls';const label=document.createElement('span');label.className='muted';label.textContent='Минуты:';const input=document.createElement('input');input.type='number';input.min='1';input.value=e.duration;input.onchange=()=>{e.duration=Math.max(1,Number(input.value)||1);renderPlan();};const up=document.createElement('button');up.className='mini-btn';up.textContent='↑';up.disabled=i===0;up.onclick=()=>{[currentPlan[i-1],currentPlan[i]]=[currentPlan[i],currentPlan[i-1]];renderPlan();};const down=document.createElement('button');down.className='mini-btn';down.textContent='↓';down.disabled=i===currentPlan.length-1;down.onclick=()=>{[currentPlan[i+1],currentPlan[i]]=[currentPlan[i],currentPlan[i+1]];renderPlan();};controls.append(label,input,up,down);row.append(head,meta,controls);$('planList').append(row);});const total=currentPlan.reduce((s,e)=>s+Number(e.duration||0),0);$('planTotal').textContent=`${total} мин`;$('planItems').textContent=`${currentPlan.length} упражнений`;$('planCount').textContent=currentPlan.length;$('emptyPlan').classList.toggle('hidden',currentPlan.length>0);$('savePlanBtn').disabled=!currentPlan.length;$('clearPlanBtn').disabled=!currentPlan.length;}
 $('clearPlanBtn').onclick=()=>{currentPlan=[];renderPlan();};
-$('savePlanBtn').onclick=async()=>{const name=$('trainingName').value.trim()||'Тренировка';plans.unshift({id:uid(),name,date:new Date().toISOString(),items:structuredClone(currentPlan)});currentPlan=[];await persist();$('trainingName').value='Новая тренировка';switchTab('plans');toast('Тренировка сохранена');};
+$('savePlanBtn').onclick=async()=>{const name=$('trainingName').value.trim()||'Тренировка';const category=$('trainingCategory').value||'Бадминтон';plans.unshift({id:uid(),name,category,date:new Date().toISOString(),items:structuredClone(currentPlan)});currentPlan=[];await persist();$('trainingName').value='Новая тренировка';$('trainingCategory').value='Бадминтон';switchTab('plans');toast('Тренировка сохранена');};
+function getPlanCategory(plan){
+  return WORKOUT_CATEGORIES.includes(plan?.category)?plan.category:inferWorkoutCategory({planName:plan?.name,items:plan?.items||[]});
+}
 function renderPlans(){
-  $('savedPlans').innerHTML='';
-  $('emptyPlans').classList.toggle('hidden',plans.length>0);
-  plans.forEach(p=>{
+  const list=$('savedPlans');
+  list.innerHTML='';
+  const filteredPlans=plans.filter(plan=>activePlanCategory==='all'||getPlanCategory(plan)===activePlanCategory);
+  document.querySelectorAll('[data-plan-category]').forEach(button=>button.classList.toggle('active',button.dataset.planCategory===activePlanCategory));
+  const empty=$('emptyPlans');
+  empty.textContent=plans.length===0?'Сохранённых тренировок пока нет.':`В категории «${activePlanCategory}» пока нет планов.`;
+  empty.classList.toggle('hidden',filteredPlans.length>0);
+  filteredPlans.forEach(p=>{
     const card=document.createElement('div');card.className='saved-plan';
     const h=document.createElement('strong');h.textContent=p.name;
     const items=p.items||[];
+    const categoryField=document.createElement('label');categoryField.className='plan-category-field';categoryField.textContent='Тема плана';
+    const categorySelect=document.createElement('select');categorySelect.className='plan-category-select';
+    categorySelect.add(new Option('Бадминтон','Бадминтон'));
+    categorySelect.add(new Option('Растяжка','Растяжка'));
+    categorySelect.add(new Option('Физическая подготовка','Физическая подготовка'));
+    categorySelect.value=getPlanCategory(p);
+    categorySelect.onchange=async()=>{p.category=categorySelect.value;await persist();toast('Тема плана обновлена');};
+    categoryField.append(categorySelect);
     const d=document.createElement('p');d.className='muted';
     d.textContent=`${new Date(p.date).toLocaleDateString('ru-RU')} · ${items.length} упражнений · ${items.reduce((s,x)=>s+Number(x.duration||0),0)} мин`;
     const itemList=document.createElement('div');itemList.className='saved-plan-items';
@@ -365,11 +385,11 @@ function renderPlans(){
     const actions=document.createElement('div');actions.className='card-actions';
     const log=document.createElement('button');log.className='button primary';log.type='button';log.textContent='Записать выполнение';log.onclick=()=>openWorkoutLogDialog(p);
     const edit=document.createElement('button');edit.className='button ghost';edit.type='button';edit.textContent='Открыть копию';
-    edit.onclick=()=>{$('trainingName').value=p.name+' — копия';currentPlan=structuredClone(items).map(x=>({...x,itemId:uid()}));renderPlan();switchTab('builder');};
+    edit.onclick=()=>{$('trainingName').value=p.name+' — копия';$('trainingCategory').value=getPlanCategory(p);currentPlan=structuredClone(items).map(x=>({...x,itemId:uid()}));renderPlan();switchTab('builder');};
     
 const del=document.createElement('button');del.className='button danger';del.type='button';del.textContent='Удалить';
     del.onclick=async()=>{if(confirm('Удалить этот план? Записи о ранее выполненных тренировках сохранятся.')){plans=plans.filter(x=>x.id!==p.id);await persist();}};
-    actions.append(log,edit,del);card.append(h,d,itemList,actions);$('savedPlans').append(card);
+    actions.append(log,edit,del);card.append(h,categoryField,d,itemList,actions);list.append(card);
   });
 }
 function localDateTimeInputValue(date=new Date()){
@@ -387,6 +407,7 @@ function compactExerciseSnapshot(item){
 }
 const WORKOUT_CATEGORIES=['Бадминтон','Растяжка','Физическая подготовка'];
 function inferWorkoutCategory(record){
+  if(WORKOUT_CATEGORIES.includes(record?.category))return record.category;
   const values=[record?.planName,...(record?.items||[]).flatMap(item=>[item.topic,item.exerciseSnapshot?.topic,item.name])].filter(Boolean).join(' ').toLocaleLowerCase('ru');
   if(/растяж|stretch|мобил|гибкост/.test(values))return 'Растяжка';
   if(/физическ|силов|кардио|тренажер|мышц|корпус|ноги|пресс/.test(values))return 'Физическая подготовка';
@@ -497,6 +518,7 @@ function createPlanFromHistory(record){
     return {...structuredClone(source),itemId:uid(),duration:Number(item.actualMinutes)||Number(item.plannedMinutes)||Number(source.duration)||8};
   });
   $('trainingName').value=`${record.planName||'Тренировка'} — по журналу`;
+  $('trainingCategory').value=record.category||inferWorkoutCategory(record);
   renderPlan();switchTab('builder');toast('План подготовлен по записи из журнала');
 }
 function formatLoggedDate(value){
@@ -594,6 +616,7 @@ function renderWorkoutHistory(){
 
 
 document.querySelectorAll('[data-history-category]').forEach(button=>button.addEventListener('click',()=>{activeHistoryCategory=button.dataset.historyCategory;renderWorkoutHistory();}));
+document.querySelectorAll('[data-plan-category]').forEach(button=>button.addEventListener('click',()=>{activePlanCategory=button.dataset.planCategory;renderPlans();}));
 $('newWorkoutLogBtn').addEventListener('click',()=>openWorkoutLogDialog({id:null,name:'Самостоятельная тренировка',items:[]}));
 function resetForm(){ $('exerciseForm').reset();$('exerciseId').value='';$('exTopic').value=topics[0]||'';$('exDuration').value=8;pendingImages=[];existingImageUrls=[];$('imagePreview').innerHTML='';$('existingImages').innerHTML='';$('videoFields').innerHTML='';$('deleteExerciseBtn').classList.add('hidden');$('dialogTitle').textContent='Новое упражнение';}
 function videoRow(v={title:'',url:'',note:''}){const row=document.createElement('div');row.className='video-row';['title','url','note'].forEach((k,i)=>{const input=document.createElement('input');input.placeholder=['Название видео','https://…','Комментарий'][i];input.value=v[k]||'';input.dataset.key=k;row.append(input);});const rm=document.createElement('button');rm.type='button';rm.className='mini-btn';rm.textContent='×';rm.onclick=()=>row.remove();row.append(rm);$('videoFields').append(row);}

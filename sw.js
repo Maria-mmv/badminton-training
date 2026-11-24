@@ -1,4 +1,4 @@
-const CACHE = 'badminton-training-v14-workout-history-edit-categories';
+const CACHE = 'badminton-training-v15-workout-history-edit-categories';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

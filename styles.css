@@ -93,3 +93,11 @@
 .workout-add-exercise select,.workout-add-exercise input{flex:1;min-width:0}
 .workout-log-exercise>.button{align-self:flex-start}
 @media(max-width:650px){.history-filters .button{flex:1 1 calc(50% - 8px)}.workout-add-exercise{flex-direction:column;align-items:stretch}.workout-add-exercise .button{width:100%}}
+
+
+/* Category filters and labels for saved training plans */
+.plan-filters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 18px}
+.plan-filters .button.active{background:#d9e8f5;color:#173b63;box-shadow:inset 0 0 0 1px #9dbbd7}
+.plan-category-field{display:flex;align-items:center;gap:9px;margin:10px 0;color:#738196;font-size:12px}
+.plan-category-select{max-width:245px;padding:7px 9px;font-size:12px}
+@media(max-width:650px){.plan-filters{display:grid;grid-template-columns:1fr 1fr}.plan-category-field{align-items:flex-start;flex-direction:column}.plan-category-select{max-width:none;width:100%}}

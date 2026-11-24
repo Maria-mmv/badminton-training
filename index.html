@@ -61,6 +61,7 @@
     <section id="builder" class="panel">
       <div class="section-head"><div><h2>Конструктор тренировки</h2><p class="muted">Добавляйте упражнения из библиотеки и меняйте порядок и длительность.</p></div></div>
       <label class="field">Название тренировки<input id="trainingName" value="Новая тренировка"></label>
+      <label class="field">Тема плана<select id="trainingCategory"><option>Бадминтон</option><option>Растяжка</option><option>Физическая подготовка</option></select></label>
       <div class="plan-summary"><strong id="planTotal">0 мин</strong><span id="planItems">0 упражнений</span></div>
       <div id="planList" class="stack"></div>
       <div id="emptyPlan" class="empty">Тренировка пока пустая. Добавьте упражнения из библиотеки.</div>
@@ -69,6 +70,12 @@
 
     <section id="plans" class="panel">
       <div class="section-head"><div><h2>Мои планы</h2><p class="muted">Сохранённые тренировки можно открыть и изменить.</p></div></div>
+      <div class="plan-filters" aria-label="Фильтр планов">
+        <button type="button" class="button ghost active" data-plan-category="all">Все</button>
+        <button type="button" class="button ghost" data-plan-category="Бадминтон">Бадминтон</button>
+        <button type="button" class="button ghost" data-plan-category="Растяжка">Растяжка</button>
+        <button type="button" class="button ghost" data-plan-category="Физическая подготовка">Физическая подготовка</button>
+      </div>
       <div id="savedPlans" class="stack"></div>
       <div id="emptyPlans" class="empty">Сохранённых тренировок пока нет.</div>
     </section>
